@@ -34,3 +34,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Auth host güveni
+
+Auth.js proxy/host güveni varsayılan olarak kapalıdır. Yalnızca güvenilir bir yerel test veya kontrollü reverse-proxy ortamında `AUTH_TRUST_HOST=true` ayarlayın; production ortamında beklenmeyen `Host` başlıklarını körlemesine güvenilir yapmayın.

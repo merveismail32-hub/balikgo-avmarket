@@ -11,6 +11,8 @@ const credentialsSchema = z.object({
 });
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // Proxy/host güveni yalnızca ortam yöneticisi açıkça etkinleştirdiğinde açılır.
+  trustHost: process.env.AUTH_TRUST_HOST === "true",
   session: { strategy: "jwt" },
   pages: { signIn: "/giris" },
   providers: [

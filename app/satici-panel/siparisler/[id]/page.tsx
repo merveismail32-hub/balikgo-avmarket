@@ -7,10 +7,19 @@ import { prisma } from "@/app/lib/prisma";
 export default async function SellerOrderDetailPage({ params }: PageProps<"/satici-panel/siparisler/[id]">) {
   const seller = await requireApprovedSeller();
   const { id } = await params;
-  const item = await prisma.orderItem.findFirst({
-    where: { id, sellerId: seller.id },
-    include: { order: { include: { user: { select: { name: true, surname: true } } } }, statusHistory: { orderBy: { createdAt: "asc" } } },
+  const legacyItem = await prisma.orderItem.findFirst({ where: { id, sellerId: seller.id }, select: { orderId: true } });
+  const order = await prisma.order.findFirst({
+    where: { id: legacyItem?.orderId ?? id, items: { some: { sellerId: seller.id } } },
+    select: {
+      id: true, orderNumber: true, recipientName: true, phone: true, city: true, district: true,
+      address: true, postalCode: true, createdAt: true,
+      items: {
+        where: { sellerId: seller.id }, orderBy: { createdAt: "asc" },
+        select: { id: true, productName: true, productSku: true, productImageUrl: true, unitPrice: true, quantity: true, commissionAmount: true, sellerNetAmount: true, status: true, shippingCompany: true, trackingNumber: true, createdAt: true, statusHistory: { orderBy: { createdAt: "asc" } } },
+      },
+    },
   });
-  if (!item) notFound();
-  return <SellerPanelShell title="Sipariş detayı" description="Gönderi ve sipariş durumunu güvenli operasyon akışıyla yönetin." storeName={seller.storeName}><SellerOrderDetail item={item} /></SellerPanelShell>;
+  if (!order) notFound();
+  const view = { ...order, items: order.items.map((item) => ({ ...item, unitPrice: Number(item.unitPrice), commissionAmount: item.commissionAmount ? Number(item.commissionAmount) : null, sellerNetAmount: item.sellerNetAmount ? Number(item.sellerNetAmount) : null })) };
+  return <SellerPanelShell title="Sipariş detayı" description="Yalnızca mağazanıza ait ürünlerin gönderi ve durum işlemlerini yönetin." storeName={seller.storeName}><SellerOrderDetail order={view} /></SellerPanelShell>;
 }

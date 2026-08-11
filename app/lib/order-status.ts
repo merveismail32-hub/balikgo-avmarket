@@ -19,6 +19,8 @@ export const SELLER_ORDER_TRANSITIONS: Partial<Record<OrderStatus, { label: stri
   SHIPPED: { label: "Teslim Edildi", target: "DELIVERED" },
 };
 
+export const SELLER_CANCELLABLE_STATUSES: OrderStatus[] = ["NEW", "PREPARING"];
+
 export const SHIPPING_COMPANIES = [
   "Yurtiçi Kargo",
   "Aras Kargo",

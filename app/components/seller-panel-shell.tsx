@@ -4,12 +4,14 @@ import type { ReactNode } from "react";
 const menuItems = [
   { href: "/satici-panel", label: "Genel Bakış", icon: "▦" },
   { href: "/satici-panel/urunler", label: "Ürünlerim", icon: "◫" },
+  { href: "/satici-panel/stok-fiyat", label: "Stok & Fiyat", icon: "₺" },
   { href: "/satici-panel/urun-ekle", label: "Ürün Ekle", icon: "+" },
   { href: "/satici-panel/siparisler", label: "Siparişler", icon: "□" },
   { href: "/satici-panel/satislar", label: "Satışlar", icon: "↗" },
+  { href: "/satici-panel/yorumlar", label: "Yorumlar", icon: "★" },
   { href: "#", label: "Kampanyalar", icon: "✦" },
   { href: "#", label: "Mağaza Bilgileri", icon: "◉" },
-  { href: "/satici-panel/odemeler", label: "Ödemeler", icon: "₺" },
+  { href: "/satici-panel/odemeler", label: "Finans & Hakediş", icon: "₺" },
 ];
 
 export function SellerPanelShell({ title, description, children, storeName }: { title: string; description: string; children: ReactNode; storeName?: string }) {

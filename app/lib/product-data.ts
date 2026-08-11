@@ -1,8 +1,9 @@
 import "server-only";
 
 import type { Product as DatabaseProduct, SellerProfile } from "@prisma/client";
-import { products as fallbackProducts, formatPrice, type Product } from "./products";
+import { formatPrice, type Product } from "./products";
 import { prisma } from "./prisma";
+import { publicProductPolicy } from "./product-visibility";
 
 export function toStoreProduct(product: DatabaseProduct & { seller?: SellerProfile }): Product {
   const price = Number(product.price);
@@ -10,6 +11,7 @@ export function toStoreProduct(product: DatabaseProduct & { seller?: SellerProfi
 
   return {
     id: product.id,
+    slug: product.slug,
     name: product.name,
     price: formatPrice(price),
     unitPrice: price,
@@ -33,7 +35,7 @@ export function toStoreProduct(product: DatabaseProduct & { seller?: SellerProfi
 
 export async function getCatalogProducts() {
   const databaseProducts = await prisma.product.findMany({
-    where: { active: true, stock: { gt: 0 } },
+    where: { ...publicProductPolicy, stock: { gt: 0 } },
     orderBy: { createdAt: "asc" },
     include: { seller: true },
   });
@@ -45,15 +47,15 @@ export async function getCatalogProductsOrFallback() {
   try {
     return await getCatalogProducts();
   } catch {
-    return fallbackProducts;
+    return [];
   }
 }
 
 export async function getCatalogProductByIdOrFallback(id: string) {
   try {
-    const product = await prisma.product.findFirst({ where: { id, active: true }, include: { seller: true } });
-    return product ? toStoreProduct(product) : fallbackProducts.find((item) => item.id === id) ?? null;
+    const product = await prisma.product.findFirst({ where: { id, ...publicProductPolicy }, include: { seller: true } });
+    return product ? toStoreProduct(product) : null;
   } catch {
-    return fallbackProducts.find((item) => item.id === id) ?? null;
+    return null;
   }
 }

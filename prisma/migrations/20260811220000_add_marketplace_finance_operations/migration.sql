@@ -1,0 +1,41 @@
+CREATE TYPE "RefundStatus" AS ENUM ('REQUESTED', 'APPROVED', 'PROCESSING', 'COMPLETED', 'REJECTED', 'FAILED', 'CANCELLED');
+CREATE TYPE "NotificationStatus" AS ENUM ('PENDING', 'PROCESSING', 'SENT', 'FAILED', 'CANCELLED');
+CREATE TYPE "NotificationChannel" AS ENUM ('IN_APP', 'EMAIL', 'SMS', 'WHATSAPP', 'PUSH');
+ALTER TABLE "Payment" ADD COLUMN "idempotencyKey" VARCHAR(120);
+CREATE UNIQUE INDEX "Payment_idempotencyKey_key" ON "Payment"("idempotencyKey");
+CREATE INDEX "Payment_status_createdAt_idx" ON "Payment"("status", "createdAt");
+CREATE INDEX "Payment_provider_createdAt_idx" ON "Payment"("provider", "createdAt");
+
+CREATE TABLE "PaymentEvent" ("id" TEXT NOT NULL, "paymentId" TEXT NOT NULL, "provider" VARCHAR(80) NOT NULL, "providerEventId" VARCHAR(191) NOT NULL, "eventType" VARCHAR(100) NOT NULL, "payloadHash" VARCHAR(128), "processedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "PaymentEvent_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "Refund" ("id" TEXT NOT NULL, "paymentId" TEXT NOT NULL, "orderId" TEXT NOT NULL, "orderItemId" TEXT NOT NULL, "sellerId" TEXT NOT NULL, "requestedByUserId" TEXT, "idempotencyKey" VARCHAR(120) NOT NULL, "providerRefundId" VARCHAR(191), "amount" DECIMAL(12,2) NOT NULL, "currency" VARCHAR(3) NOT NULL DEFAULT 'TRY', "reason" VARCHAR(500) NOT NULL, "status" "RefundStatus" NOT NULL DEFAULT 'REQUESTED', "requestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "completedAt" TIMESTAMP(3), "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Refund_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "FinancialAuditEvent" ("id" TEXT NOT NULL, "paymentId" TEXT, "refundId" TEXT, "orderId" TEXT, "actorUserId" TEXT, "entityType" VARCHAR(50) NOT NULL, "entityId" TEXT NOT NULL, "eventType" VARCHAR(100) NOT NULL, "fromStatus" VARCHAR(50), "toStatus" VARCHAR(50), "source" VARCHAR(50) NOT NULL, "externalEventId" VARCHAR(191), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "FinancialAuditEvent_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "Notification" ("id" TEXT NOT NULL, "userId" TEXT, "sellerId" TEXT, "orderId" TEXT, "type" VARCHAR(80) NOT NULL, "channel" "NotificationChannel" NOT NULL DEFAULT 'IN_APP', "status" "NotificationStatus" NOT NULL DEFAULT 'PENDING', "dedupeKey" VARCHAR(191) NOT NULL, "title" VARCHAR(160) NOT NULL, "message" VARCHAR(500) NOT NULL, "metadata" JSONB, "sentAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Notification_pkey" PRIMARY KEY ("id"));
+
+CREATE UNIQUE INDEX "PaymentEvent_provider_providerEventId_key" ON "PaymentEvent"("provider", "providerEventId");
+CREATE INDEX "PaymentEvent_paymentId_processedAt_idx" ON "PaymentEvent"("paymentId", "processedAt");
+CREATE UNIQUE INDEX "Refund_idempotencyKey_key" ON "Refund"("idempotencyKey");
+CREATE UNIQUE INDEX "Refund_providerRefundId_key" ON "Refund"("providerRefundId");
+CREATE INDEX "Refund_sellerId_status_requestedAt_idx" ON "Refund"("sellerId", "status", "requestedAt");
+CREATE INDEX "Refund_orderId_requestedAt_idx" ON "Refund"("orderId", "requestedAt");
+CREATE INDEX "Refund_paymentId_status_idx" ON "Refund"("paymentId", "status");
+CREATE UNIQUE INDEX "FinancialAuditEvent_source_externalEventId_key" ON "FinancialAuditEvent"("source", "externalEventId");
+CREATE INDEX "FinancialAuditEvent_entityType_entityId_createdAt_idx" ON "FinancialAuditEvent"("entityType", "entityId", "createdAt");
+CREATE INDEX "FinancialAuditEvent_orderId_createdAt_idx" ON "FinancialAuditEvent"("orderId", "createdAt");
+CREATE UNIQUE INDEX "Notification_dedupeKey_key" ON "Notification"("dedupeKey");
+CREATE INDEX "Notification_userId_status_createdAt_idx" ON "Notification"("userId", "status", "createdAt");
+CREATE INDEX "Notification_sellerId_status_createdAt_idx" ON "Notification"("sellerId", "status", "createdAt");
+CREATE INDEX "Notification_status_createdAt_idx" ON "Notification"("status", "createdAt");
+
+ALTER TABLE "PaymentEvent" ADD CONSTRAINT "PaymentEvent_paymentId_fkey" FOREIGN KEY ("paymentId") REFERENCES "Payment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_paymentId_fkey" FOREIGN KEY ("paymentId") REFERENCES "Payment"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_orderItemId_fkey" FOREIGN KEY ("orderItemId") REFERENCES "OrderItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_sellerId_fkey" FOREIGN KEY ("sellerId") REFERENCES "SellerProfile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_requestedByUserId_fkey" FOREIGN KEY ("requestedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "FinancialAuditEvent" ADD CONSTRAINT "FinancialAuditEvent_paymentId_fkey" FOREIGN KEY ("paymentId") REFERENCES "Payment"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "FinancialAuditEvent" ADD CONSTRAINT "FinancialAuditEvent_refundId_fkey" FOREIGN KEY ("refundId") REFERENCES "Refund"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "FinancialAuditEvent" ADD CONSTRAINT "FinancialAuditEvent_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "FinancialAuditEvent" ADD CONSTRAINT "FinancialAuditEvent_actorUserId_fkey" FOREIGN KEY ("actorUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Notification" ADD CONSTRAINT "Notification_sellerId_fkey" FOREIGN KEY ("sellerId") REFERENCES "SellerProfile"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Notification" ADD CONSTRAINT "Notification_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE CASCADE ON UPDATE CASCADE;

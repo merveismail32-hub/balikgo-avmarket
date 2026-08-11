@@ -1,0 +1,3 @@
+import "server-only"; import { Prisma } from "@prisma/client";
+export function normalizeCouponCode(value: unknown){if(typeof value!=="string")return null;const code=value.trim().toLocaleUpperCase("tr-TR");return code||null;}
+export function couponDiscount(coupon:{discountType:"PERCENTAGE"|"FIXED";discountValue:Prisma.Decimal;maxDiscount:Prisma.Decimal|null},eligible:Prisma.Decimal){let value=coupon.discountType==="PERCENTAGE"?eligible.mul(coupon.discountValue).div(100):coupon.discountValue;if(coupon.maxDiscount&&value.gt(coupon.maxDiscount))value=coupon.maxDiscount;return Prisma.Decimal.min(value,eligible).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);}

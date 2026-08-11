@@ -1,59 +1,6 @@
 "use client";
-
-import { useEffect, useRef, useState } from "react";
-
-type SearchBoxProps = {
-  initialQuery?: string;
-};
-
-export function SearchBox({ initialQuery = "" }: SearchBoxProps) {
-  const [query, setQuery] = useState(initialQuery);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setQuery(initialQuery);
-  }, [initialQuery]);
-
-  function clearSearch() {
-    setQuery("");
-    inputRef.current?.focus();
-  }
-
-  return (
-    <form
-      role="search"
-      action="/arama"
-      method="get"
-      className="flex items-center rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 transition focus-within:border-sky-500"
-    >
-      <span className="mr-3 text-lg" aria-hidden="true">🔎</span>
-      <input
-        ref={inputRef}
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        name="q"
-        type="search"
-        placeholder="Ürün, marka veya kategori ara..."
-        aria-label="Ürün, marka veya kategori ara"
-        className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-      />
-      {query && (
-        <button
-          type="button"
-          onClick={clearSearch}
-          aria-label="Aramayı temizle"
-          className="ml-2 rounded-md px-1 text-lg leading-none text-slate-400 transition hover:text-slate-950"
-        >
-          ×
-        </button>
-      )}
-      <button
-        type="submit"
-        aria-label="Ara"
-        className="ml-2 rounded-lg bg-sky-500 px-2 py-1 text-sm font-bold text-white transition hover:bg-sky-600"
-      >
-        →
-      </button>
-    </form>
-  );
-}
+import Link from "next/link"; import { useEffect, useRef, useState } from "react";
+type Suggestion={type:"product"|"category"|"brand";label:string;href:string};
+export function SearchBox({initialQuery=""}:{initialQuery?:string}){const[query,setQuery]=useState(initialQuery),[suggestions,setSuggestions]=useState<Suggestion[]>([]),[loading,setLoading]=useState(false),inputRef=useRef<HTMLInputElement>(null);
+useEffect(()=>{if(query.trim().length<2)return;const controller=new AbortController(),timer=setTimeout(()=>{setLoading(true);fetch(`/api/search/suggestions?q=${encodeURIComponent(query)}`,{signal:controller.signal}).then(r=>r.ok?r.json():[]).then(setSuggestions).catch(()=>undefined).finally(()=>setLoading(false))},250);return()=>{clearTimeout(timer);controller.abort()}},[query]);
+return <div className="relative"><form role="search" action="/arama" className="flex items-center rounded-xl border-2 bg-slate-50 px-3 py-2 focus-within:border-sky-500"><label htmlFor="global-search" className="sr-only">Ürün, marka veya kategori ara</label><input id="global-search" ref={inputRef} value={query} onChange={e=>{const value=e.target.value.slice(0,100);setQuery(value);if(value.trim().length<2)setSuggestions([])}} name="q" type="search" placeholder="Ürün, marka veya kategori ara" className="min-w-0 flex-1 bg-transparent text-sm outline-none"/>{query&&<button type="button" aria-label="Aramayı temizle" onClick={()=>{setQuery("");setSuggestions([]);inputRef.current?.focus()}} className="px-2">×</button>}<button aria-label="Ara" className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-bold text-white">Ara</button></form>{(loading||suggestions.length>0)&&<div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border bg-white shadow-xl">{loading&&<p className="p-3 text-sm text-slate-500">Aranıyor...</p>}{suggestions.map(item=><Link key={`${item.type}-${item.href}`} href={item.href} onClick={()=>setSuggestions([])} className="flex justify-between border-t px-4 py-3 text-sm hover:bg-slate-50"><span>{item.label}</span><span className="text-xs uppercase text-slate-400">{item.type}</span></Link>)}</div>}</div>}

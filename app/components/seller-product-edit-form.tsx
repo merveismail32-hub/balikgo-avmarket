@@ -11,6 +11,11 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 type EditableProduct = {
   id: string;
   name: string;
+  sku: string | null;
+  moderationStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED";
+  moderationReason: string | null;
+  categoryId: string | null;
+  brandId: string | null;
   category: string;
   brand: string;
   price: number;
@@ -29,7 +34,8 @@ function storagePath(url: string) {
   return position >= 0 ? decodeURIComponent(url.slice(position + marker.length)) : null;
 }
 
-export function SellerProductEditForm({ product }: { product: EditableProduct }) {
+type Option = { id: string; name: string };
+export function SellerProductEditForm({ product, categories, brands }: { product: EditableProduct; categories: Option[]; brands: Option[] }) {
   const router = useRouter();
   const [images, setImages] = useState(product.images);
   const [newFiles, setNewFiles] = useState<File[]>([]);
@@ -100,10 +106,11 @@ export function SellerProductEditForm({ product }: { product: EditableProduct })
   }
 
   const input = "mt-2 w-full rounded-xl border border-slate-200 px-4 py-3.5 text-sm outline-none focus:border-sky-500";
-  return <form onSubmit={submit} className="max-w-4xl rounded-2xl border bg-white p-5 shadow-sm sm:p-7"><div className="grid gap-5 sm:grid-cols-2">
+  return <form onSubmit={submit} className="max-w-4xl rounded-2xl border bg-white p-5 shadow-sm sm:p-7">{product.moderationStatus !== "APPROVED" && <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-bold">Moderasyon durumu: {product.moderationStatus === "PENDING" ? "Onay bekliyor" : product.moderationStatus === "REJECTED" ? "Reddedildi" : "Askıya alındı"}</p>{product.moderationReason && <p className="mt-2">Neden: {product.moderationReason}</p>}{product.moderationStatus === "REJECTED" && <p className="mt-2">Kritik ürün bilgilerini düzelttiğinizde ürün yeniden incelemeye gönderilir.</p>}</div>}<div className="grid gap-5 sm:grid-cols-2">
     <label className="block text-sm font-bold sm:col-span-2">Ürün adı<input required name="name" defaultValue={product.name} className={input} /></label>
-    <label className="block text-sm font-bold">Kategori<input required name="category" defaultValue={product.category} className={input} /></label>
-    <label className="block text-sm font-bold">Marka<input required name="brand" defaultValue={product.brand} className={input} /></label>
+    <label className="block text-sm font-bold">SKU / Stok Kodu<input name="sku" maxLength={80} placeholder="Örn. MISINA-001" defaultValue={product.sku ?? ""} className={input} /><span className="mt-2 block text-xs font-normal text-slate-500">İsteğe bağlıdır. Mağazanız içinde benzersiz olmalıdır.</span></label>
+    <label className="block text-sm font-bold">Kategori<select required name="categoryId" defaultValue={product.categoryId ?? "__legacy__"} className={input}>{!product.categoryId && <option value="__legacy__">Mevcut legacy kategori: {product.category}</option>}{categories.map((item)=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+    <label className="block text-sm font-bold">Marka<select name="brandId" defaultValue={product.brandId ?? (product.brand ? "__legacy__" : "")} className={input}>{!product.brandId && product.brand && <option value="__legacy__">Mevcut legacy marka: {product.brand}</option>}<option value="">Markasız / Seçilmedi</option>{brands.map((item)=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
     <label className="block text-sm font-bold">Satış fiyatı<input required name="price" type="number" min="1" step="0.01" defaultValue={product.price} className={input} /></label>
     <label className="block text-sm font-bold">Eski fiyat<input name="oldPrice" type="number" min="1" step="0.01" defaultValue={product.oldPrice ?? ""} className={input} /></label>
     <label className="block text-sm font-bold">Stok<input required name="stock" type="number" min="0" defaultValue={product.stock} className={input} /></label>
