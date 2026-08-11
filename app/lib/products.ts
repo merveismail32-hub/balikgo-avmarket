@@ -101,7 +101,7 @@ export const products: Product[] = [
 export const spinOltaSeti = products[0];
 
 export function formatPrice(price: number) {
-  return `${new Intl.NumberFormat("tr-TR").format(price)} TL`;
+  return `${new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(price)} TL`;
 }
 
 function normalizeSearchText(value: string) {

@@ -35,7 +35,16 @@ export async function POST(request: Request) {
         total += Number(product.price) * item.quantity;
       }
       const orderNumber = `BG-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!; const money = commissionFor(product.price, item.quantity); return { productId: product.id, sellerId: product.sellerId, productName: product.name, productImageUrl: product.imageUrl, unitPrice: product.price, quantity: item.quantity, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net }; }) } }, include: includes });
+      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!; const money = commissionFor(product.price, item.quantity); return { productId: product.id, sellerId: product.sellerId, productName: product.name, productImageUrl: product.imageUrl, unitPrice: product.price, quantity: item.quantity, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, statusHistory: { create: { toStatus: "NEW" } } }; }) } }, include: includes });
+      await tx.payment.create({ data: { orderId: created.id, amount: created.totalAmount, provider: "TEST_PENDING", status: "PENDING", metadata: { note: "Gerçek ödeme sağlayıcısı bağlanmadı." } } });
+      for (const orderItem of created.items) {
+        const grossAmount = orderItem.unitPrice.mul(orderItem.quantity);
+        const payout = await tx.sellerPayout.create({ data: { sellerId: orderItem.sellerId, orderId: created.id, orderItemId: orderItem.id, grossAmount, commissionAmount: orderItem.commissionAmount ?? 0, providerFeeAmount: 0, netAmount: orderItem.sellerNetAmount ?? grossAmount.minus(orderItem.commissionAmount ?? 0), status: "PENDING" } });
+        await tx.financialLedgerEntry.createMany({ data: [
+          { sellerId: orderItem.sellerId, orderItemId: orderItem.id, payoutId: payout.id, type: "SALE", amount: grossAmount },
+          { sellerId: orderItem.sellerId, orderItemId: orderItem.id, payoutId: payout.id, type: "COMMISSION", amount: orderItem.commissionAmount ?? 0 },
+        ] });
+      }
       await tx.cartItem.deleteMany({ where: { userId: session.user.id, productId: { in: items.map((item) => item.productId) } } });
       return created;
     });

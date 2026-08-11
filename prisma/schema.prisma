@@ -21,9 +21,41 @@ enum SellerStatus {
 enum OrderStatus {
   NEW
   PREPARING
+  READY_TO_SHIP
   SHIPPED
   COMPLETED
+  DELIVERED
   CANCELLED
+  RETURN_REQUESTED
+  RETURNED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  BLOCKED
+  AVAILABLE
+  SCHEDULED
+  PAID
+  CANCELLED
+}
+
+enum LedgerEntryType {
+  SALE
+  COMMISSION
+  PROVIDER_FEE
+  PAYOUT
+  REFUND
+  ADJUSTMENT
 }
 
 model User {
@@ -60,6 +92,8 @@ model SellerProfile {
   rejectionReason String?  @db.VarChar(500)
   products    Product[]
   orderItems  OrderItem[]
+  payouts     SellerPayout[]
+  ledgerEntries FinancialLedgerEntry[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 }
@@ -109,6 +143,8 @@ model Order {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   items           OrderItem[]
+  payment         Payment?
+  payouts         SellerPayout[]
 
   @@index([userId, createdAt])
 }
@@ -129,6 +165,9 @@ model OrderItem {
   commissionAmount Decimal?      @db.Decimal(12, 2)
   sellerNetAmount Decimal?       @db.Decimal(12, 2)
   order           Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  statusHistory   OrderStatusHistory[]
+  payout          SellerPayout?
+  ledgerEntries   FinancialLedgerEntry[]
   product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
   seller          SellerProfile @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   createdAt       DateTime      @default(now())
@@ -136,6 +175,71 @@ model OrderItem {
 
   @@index([sellerId, createdAt])
   @@index([orderId])
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  orderId           String        @unique
+  provider          String        @default("TEST_PENDING")
+  providerPaymentId String?       @unique
+  amount            Decimal       @db.Decimal(12, 2)
+  currency          String        @default("TRY") @db.VarChar(3)
+  status            PaymentStatus @default(PENDING)
+  paymentMethod     String?       @db.VarChar(80)
+  metadata          Json?
+  paidAt            DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+model SellerPayout {
+  id                String       @id @default(cuid())
+  sellerId          String
+  orderId           String
+  orderItemId       String       @unique
+  grossAmount       Decimal      @db.Decimal(12, 2)
+  commissionAmount  Decimal      @db.Decimal(12, 2)
+  providerFeeAmount Decimal      @default(0) @db.Decimal(12, 2)
+  netAmount         Decimal      @db.Decimal(12, 2)
+  currency          String       @default("TRY") @db.VarChar(3)
+  status            PayoutStatus @default(PENDING)
+  availableAt       DateTime?
+  paidAt            DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  seller            SellerProfile @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  order             Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem         OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  ledgerEntries     FinancialLedgerEntry[]
+  @@index([sellerId, status, createdAt])
+}
+
+model FinancialLedgerEntry {
+  id           String          @id @default(cuid())
+  sellerId     String
+  orderItemId  String
+  payoutId     String?
+  type         LedgerEntryType
+  amount       Decimal         @db.Decimal(12, 2)
+  currency     String          @default("TRY") @db.VarChar(3)
+  createdAt    DateTime        @default(now())
+  seller       SellerProfile   @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  orderItem    OrderItem       @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  payout       SellerPayout?   @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  @@index([sellerId, createdAt])
+  @@index([orderItemId, type])
+}
+
+model OrderStatusHistory {
+  id          String      @id @default(cuid())
+  orderItemId String
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  createdAt   DateTime    @default(now())
+  orderItem   OrderItem   @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  @@index([orderItemId, createdAt])
 }
 
 model CartItem {

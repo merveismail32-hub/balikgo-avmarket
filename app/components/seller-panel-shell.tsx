@@ -9,7 +9,7 @@ const menuItems = [
   { href: "/satici-panel/satislar", label: "Satışlar", icon: "↗" },
   { href: "#", label: "Kampanyalar", icon: "✦" },
   { href: "#", label: "Mağaza Bilgileri", icon: "◉" },
-  { href: "#", label: "Ödemeler", icon: "₺" },
+  { href: "/satici-panel/odemeler", label: "Ödemeler", icon: "₺" },
 ];
 
 export function SellerPanelShell({ title, description, children, storeName }: { title: string; description: string; children: ReactNode; storeName?: string }) {
