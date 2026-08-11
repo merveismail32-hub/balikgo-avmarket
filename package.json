@@ -10,7 +10,9 @@
     "make-admin": "tsx scripts/make-admin.ts",
     "test:order-state-machine": "tsx scripts/verify-order-state-machine.ts",
     "test:checkout-api": "tsx scripts/verify-checkout-api.ts",
-    "test:finance-invariants": "tsx scripts/verify-finance-invariants.ts"
+    "test:finance-invariants": "tsx scripts/verify-finance-invariants.ts",
+    "test:shipping": "tsx scripts/verify-shipping.ts",
+    "test:shipping-runtime": "tsx scripts/verify-shipping-runtime.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

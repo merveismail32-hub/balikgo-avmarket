@@ -17,6 +17,15 @@ export const customerOrderSelect = {
   createdAt: true,
   updatedAt: true,
   payment: { select: { status: true } },
+  shipments: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true, status: true, carrierCode: true, carrierName: true, trackingNumber: true,
+      preparedAt: true, shippedAt: true, deliveredAt: true, estimatedDeliveryAt: true,
+      seller: { select: { id: true, storeName: true, storeSlug: true } },
+      items: { select: { quantity: true, orderItem: { select: { id: true, productName: true, productSku: true, productImageUrl: true, unitPrice: true, status: true } } } },
+    },
+  },
   items: {
     select: {
       id: true,

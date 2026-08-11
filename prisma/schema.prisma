@@ -108,6 +108,15 @@ enum NotificationChannel {
   PUSH
 }
 
+enum ShipmentStatus {
+  NOT_READY
+  PREPARING
+  READY_TO_SHIP
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
 model User {
   id                 String                @id @default(cuid())
   name               String
@@ -154,6 +163,7 @@ model SellerProfile {
   notifications   Notification[]
   coupons         Coupon[]
   ledgerEntries   FinancialLedgerEntry[]
+  shipments       Shipment[]
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 }
@@ -226,6 +236,7 @@ model Order {
   refunds          Refund[]
   financialAudits  FinancialAuditEvent[]
   notifications    Notification[]
+  shipments        Shipment[]
   coupon           Coupon?               @relation(fields: [couponId], references: [id], onDelete: SetNull)
   couponRedemption CouponRedemption?
 
@@ -255,6 +266,7 @@ model OrderItem {
   refunds          Refund[]
   ledgerEntries    FinancialLedgerEntry[]
   review           Review?
+  shipmentItems    ShipmentItem[]
   product          Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
   seller           SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   createdAt        DateTime               @default(now())
@@ -262,6 +274,43 @@ model OrderItem {
 
   @@index([sellerId, createdAt])
   @@index([orderId])
+}
+
+model Shipment {
+  id                  String         @id @default(cuid())
+  orderId             String
+  sellerId            String
+  status              ShipmentStatus @default(NOT_READY)
+  carrierCode         String?        @db.VarChar(40)
+  carrierName         String?        @db.VarChar(100)
+  trackingNumber      String?        @db.VarChar(80)
+  preparedAt          DateTime?
+  shippedAt           DateTime?
+  deliveredAt         DateTime?
+  cancelledAt         DateTime?
+  estimatedDeliveryAt DateTime?
+  idempotencyKey      String?        @unique @db.VarChar(191)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  seller              SellerProfile  @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  items               ShipmentItem[]
+
+  @@index([orderId, createdAt])
+  @@index([sellerId, status, createdAt])
+}
+
+model ShipmentItem {
+  id          String    @id @default(cuid())
+  shipmentId  String
+  orderItemId String
+  quantity    Int
+  createdAt   DateTime  @default(now())
+  shipment    Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@unique([shipmentId, orderItemId])
+  @@index([orderItemId])
 }
 
 model Payment {

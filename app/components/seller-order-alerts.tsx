@@ -122,7 +122,7 @@ export function SellerOrderAlerts() {
   }
 
   return <>
-    <nav className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">{menuItems.map((item) => {
+    <nav className="flex max-w-full gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">{menuItems.map((item) => {
       const active = item.href !== "#" && (item.exact ? pathname === item.href : pathname.startsWith(item.href));
       return <Link key={item.label} href={item.href} aria-current={active ? "page" : undefined} className={`flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold transition ${active ? "bg-sky-500 text-white" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}><span className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-sm">{item.icon}</span><span>{item.label}</span>{item.orders && unread > 0 && <span className="ml-auto rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-black text-white">{unread > 99 ? "99+" : unread}</span>}</Link>;
     })}</nav>
