@@ -8,6 +8,7 @@ import { enqueueNotifications } from "@/app/lib/notifications";
 import { publicProductPolicy } from "@/app/lib/product-visibility";
 import { normalizeCouponCode } from "@/app/lib/coupon";
 import { evaluateCoupon } from "@/app/lib/coupon-evaluation";
+import { customerOrderSelect } from "@/app/lib/customer-order-select";
 
 const checkoutSchema = z.object({
   clientRequestId: z.string().uuid(),
@@ -18,10 +19,10 @@ const checkoutSchema = z.object({
   const productIds = value.items.map((item) => item.productId);
   if (new Set(productIds).size !== productIds.length) context.addIssue({ code: "custom", path: ["items"], message: "Aynı ürün sepette birden fazla satırda gönderilemez." });
 });
-const includes = { items: { include: { seller: { select: { id: true, storeName: true, storeSlug: true } } } } } as const;
+const internalIncludes = { items: { include: { seller: { select: { id: true, storeName: true, storeSlug: true } } } } } as const;
 export async function GET() {
   const session = await auth(); if (!session?.user?.id) return NextResponse.json({ error: "Oturum gerekli." }, { status: 401 });
-  return NextResponse.json(await prisma.order.findMany({ where: { userId: session.user.id }, include: includes, orderBy: { createdAt: "desc" } }));
+  return NextResponse.json(await prisma.order.findMany({ where: { userId: session.user.id }, select: customerOrderSelect, orderBy: { createdAt: "desc" } }));
 }
 export async function POST(request: Request) {
   const session = await auth(); if (!session?.user?.id) return NextResponse.json({ error: "Sipariş için giriş yapmalısınız." }, { status: 401 });
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Teslimat bilgilerini ve sepeti kontrol edin." }, { status: 400 });
   const { clientRequestId, address, items } = parsed.data; const requestedCouponCode=normalizeCouponCode(parsed.data.couponCode);
   try {
-    const duplicate = await prisma.order.findUnique({ where: { clientRequestId }, include: includes });
+    const duplicate = await prisma.order.findUnique({ where: { clientRequestId }, select: { id: true, orderNumber: true } });
     if (duplicate) return NextResponse.json(duplicate);
     const order = await prisma.$transaction(async (tx) => {
       const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) }, ...publicProductPolicy }, include: { seller: true } });
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
       const subtotal=total;let coupon=null;let discount=new Prisma.Decimal(0);let discounts=new Map<string,Prisma.Decimal>();
       if(requestedCouponCode){const evaluated=await evaluateCoupon(tx,{code:requestedCouponCode,userId:session.user.id,lines:items.map((item)=>({productId:item.productId,quantity:item.quantity,product:productById.get(item.productId)!}))});coupon=evaluated.coupon;discount=evaluated.discount;discounts=evaluated.discounts;total=subtotal.minus(discount);}
       const orderNumber = `BG-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const money = commissionFor(product.price.mul(item.quantity).minus(itemDiscount),1, commissionRateForSeller(product.sellerId)); return { productId: product.id, sellerId: product.sellerId, productName: product.name, productSku: product.sku, productImageUrl: product.imageUrl, unitPrice: product.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, statusHistory: { create: { toStatus: "NEW" } } }; }) } }, include: includes });
+      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const money = commissionFor(product.price.mul(item.quantity).minus(itemDiscount),1, commissionRateForSeller(product.sellerId)); return { productId: product.id, sellerId: product.sellerId, productName: product.name, productSku: product.sku, productImageUrl: product.imageUrl, unitPrice: product.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, statusHistory: { create: { toStatus: "NEW" } } }; }) } }, include: internalIncludes });
       if(coupon){const claimed=await tx.coupon.updateMany({where:{id:coupon.id,active:true,usageCount:coupon.usageCount},data:{usageCount:{increment:1}}});if(!claimed.count)throw new Error("Kupon kullanım limiti eşzamanlı olarak doldu.");await tx.couponRedemption.create({data:{couponId:coupon.id,userId:session.user.id,orderId:created.id,discountAmount:discount}});}
       await tx.payment.create({ data: { orderId: created.id, amount: created.totalAmount, provider: "TEST_PENDING", idempotencyKey: `order:${clientRequestId}:payment`, status: "PENDING", metadata: { note: "Gerçek ödeme sağlayıcısı bağlanmadı." } } });
       for (const orderItem of created.items) {
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
       }
       await tx.cartItem.deleteMany({ where: { userId: session.user.id, productId: { in: items.map((item) => item.productId) } } });
       await enqueueNotifications(tx, [{ userId: session.user.id, orderId: created.id, type: "ORDER_CREATED", dedupeKey: `order-created:${created.id}:customer`, title: "Siparişiniz alındı", message: `${created.orderNumber} numaralı siparişiniz oluşturuldu. Ödeme henüz bekliyor.` }]);
-      return created;
+      return { id: created.id, orderNumber: created.orderNumber };
     });
     return NextResponse.json(order, { status: 201 });
   } catch (reason) {

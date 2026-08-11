@@ -1,0 +1,37 @@
+import type { Prisma } from "@prisma/client";
+
+export const customerOrderSelect = {
+  id: true,
+  orderNumber: true,
+  totalAmount: true,
+  subtotalAmount: true,
+  discountAmount: true,
+  couponCode: true,
+  status: true,
+  recipientName: true,
+  phone: true,
+  city: true,
+  district: true,
+  address: true,
+  postalCode: true,
+  createdAt: true,
+  updatedAt: true,
+  payment: { select: { status: true } },
+  items: {
+    select: {
+      id: true,
+      productId: true,
+      productName: true,
+      productSku: true,
+      productImageUrl: true,
+      unitPrice: true,
+      quantity: true,
+      status: true,
+      shippingCompany: true,
+      trackingNumber: true,
+      createdAt: true,
+      updatedAt: true,
+      seller: { select: { id: true, storeName: true, storeSlug: true } },
+    },
+  },
+} satisfies Prisma.OrderSelect;
