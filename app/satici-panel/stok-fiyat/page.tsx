@@ -8,7 +8,7 @@ export default async function InventoryPricePage() {
   const products = await prisma.product.findMany({
     where: { sellerId: seller.id },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, sku: true, price: true, stock: true, active: true },
+    select: { id: true, name: true, sku: true, category: true, imageUrl: true, price: true, stock: true, active: true },
   });
   const rows = products.map((product) => ({ ...product, price: Number(product.price) }));
 

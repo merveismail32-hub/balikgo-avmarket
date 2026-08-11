@@ -42,7 +42,7 @@ export function SellerProductsTable({ initialProducts }: { initialProducts: Prod
       const matchesQuery = !normalizedQuery || [product.name, product.sku ?? "", product.brand].some((value) => searchable(value).includes(normalizedQuery));
       const matchesCategory = category === "all" || product.category === category;
       const matchesStatus = status === "all" || (status === "active" ? product.active : !product.active);
-      const matchesStock = stock === "all" || (stock === "in-stock" ? product.stock > 0 : product.stock === 0);
+      const matchesStock = stock === "all" || (stock === "in-stock" ? product.stock > 0 : stock === "low-stock" ? product.stock > 0 && product.stock <= 5 : product.stock === 0);
       return matchesTab && matchesQuery && matchesCategory && matchesStatus && matchesStock;
     });
   }, [category, products, query, status, stock, tab]);
@@ -79,7 +79,7 @@ export function SellerProductsTable({ initialProducts }: { initialProducts: Prod
       <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Arama<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ürün adı, SKU veya marka" className="mt-2 w-full rounded-xl border px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-sky-500" /></label>
       <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Kategori<select value={category} onChange={(event) => setCategory(event.target.value)} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-sky-500"><option value="all">Tüm kategoriler</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
       <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Durum<select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-sky-500"><option value="all">Tüm durumlar</option><option value="active">Aktif</option><option value="inactive">Pasif</option></select></label>
-      <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Stok<select value={stock} onChange={(event) => setStock(event.target.value)} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-sky-500"><option value="all">Tüm stoklar</option><option value="in-stock">Stokta</option><option value="out-of-stock">Stokta yok</option></select></label>
+      <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Stok<select value={stock} onChange={(event) => setStock(event.target.value)} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-sky-500"><option value="all">Tüm stoklar</option><option value="in-stock">Stokta</option><option value="low-stock">Düşük stok (1-5)</option><option value="out-of-stock">Stokta yok</option></select></label>
     </div>
 
     {message && <p role="status" className={`rounded-xl px-4 py-3 text-sm font-bold ${message.tone === "error" ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>{message.text}</p>}
@@ -103,7 +103,7 @@ export function SellerProductsTable({ initialProducts }: { initialProducts: Prod
           })}</tbody>
         </table>
       </div>
-      {!filtered.length && <div className="px-6 py-14 text-center"><p className="font-bold text-slate-700">Eşleşen ürün bulunamadı.</p><p className="mt-2 text-sm text-slate-500">Arama veya filtre seçimlerinizi değiştirebilirsiniz.</p></div>}
+      {!filtered.length && <div className="px-6 py-14 text-center"><p className="font-bold text-slate-700">Bu filtrelere uygun ürün bulunamadı.</p><p className="mt-2 text-sm text-slate-500">Arama veya filtre seçimlerinizi değiştirebilirsiniz.</p></div>}
     </div>
   </div>;
 }
