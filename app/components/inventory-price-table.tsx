@@ -8,6 +8,8 @@ type InventoryProduct = {
   id: string;
   name: string;
   sku: string | null;
+  model: string | null;
+  barcode: string | null;
   category: string;
   imageUrl: string;
   price: number;
@@ -36,7 +38,7 @@ export function InventoryPriceTable({ initialProducts }: { initialProducts: Inve
   const filtered = useMemo(() => {
     const value = searchable(query.trim());
     return products.filter((product) => {
-      const matchesQuery = !value || searchable(product.name).includes(value) || searchable(product.sku ?? "").includes(value);
+      const matchesQuery = !value || [product.name, product.sku ?? "", product.model ?? "", product.barcode ?? ""].some((entry) => searchable(entry).includes(value));
       const matchesCategory = category === "all" || product.category === category;
       const matchesStatus = status === "all" || (status === "active" ? product.active : !product.active);
       const matchesStock = stockFilter === "all" || (stockFilter === "in-stock" && product.stock > 0) || (stockFilter === "out-of-stock" && product.stock === 0) || (stockFilter === "low-stock" && product.stock > 0 && product.stock <= 5);

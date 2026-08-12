@@ -13,6 +13,8 @@
     "test:finance-invariants": "tsx scripts/verify-finance-invariants.ts",
     "test:shipping": "tsx scripts/verify-shipping.ts",
     "test:shipping-runtime": "tsx scripts/verify-shipping-runtime.ts"
+    ,"catalog:backfill": "tsx scripts/backfill-catalog-offers.ts"
+    ,"test:catalog-offers": "tsx scripts/verify-catalog-offers.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

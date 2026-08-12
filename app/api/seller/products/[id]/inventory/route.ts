@@ -19,8 +19,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const parsed = inventorySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Fiyat ve stok değerlerini kontrol edin." }, { status: 400 });
 
-  const updated = await prisma.product.updateMany({ where: { id, sellerId: seller.id }, data: parsed.data });
-  if (!updated.count) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
+  const updated = await prisma.$transaction(async (tx) => {
+    const product = await tx.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true } });
+    if (!product) return false;
+    await tx.product.update({ where: { id }, data: parsed.data });
+    await tx.sellerOffer.updateMany({ where: { legacyProductId: id, sellerId: seller.id }, data: parsed.data });
+    return true;
+  });
+  if (!updated) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
 
   const product = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true, price: true, stock: true, active: true } });
   if (!product) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });

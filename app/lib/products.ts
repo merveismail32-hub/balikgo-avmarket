@@ -1,5 +1,7 @@
 export type Product = {
   id: string;
+  catalogProductId?: string;
+  sellerOfferId?: string;
   slug?: string;
   name: string;
   price: string;
@@ -19,6 +21,7 @@ export type Product = {
   stock?: number;
   technicalDetails?: string;
   shippingInfo?: string;
+  offerCount?: number;
 };
 
 export type Category = {

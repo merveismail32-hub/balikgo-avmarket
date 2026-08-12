@@ -57,7 +57,7 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
   const { id } = await params;
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const item = await tx.orderItem.findFirst({ where: { id, sellerId: seller.id }, select: { orderId: true, productId: true, productName: true, quantity: true, status: true, order: { select: { userId: true, orderNumber: true, payment: { select: { status: true } } } } } });
+      const item = await tx.orderItem.findFirst({ where: { id, sellerId: seller.id }, select: { orderId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, status: true, order: { select: { userId: true, orderNumber: true, payment: { select: { status: true } } } } } });
       if (!item) return null;
       const target = parsed.data.status;
 
@@ -82,6 +82,7 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
       await enqueueNotifications(tx, [{ userId: item.order.userId, orderId: item.orderId, type: `ORDER_${target}`, dedupeKey: `order-status:${id}:${target}:customer`, title: "Sipariş durumu güncellendi", message: `${item.order.orderNumber} siparişindeki ${item.productName} ürünü için yeni durum: ${ORDER_STATUS_LABELS[target]}.` }]);
       if (target === "CANCELLED") {
         await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
+        if (item.sellerOfferId) await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } } });
         await tx.sellerPayout.updateMany({ where: { orderItemId: id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED" } });
       }
       if (target === "DELIVERED" && item.order.payment?.status === "PAID") await tx.sellerPayout.updateMany({ where: { orderItemId: id, status: "PENDING" }, data: { status: "AVAILABLE", availableAt: new Date() } });

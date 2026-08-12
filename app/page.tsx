@@ -4,6 +4,7 @@ import { ProductCard } from "@/app/components/product-card";
 import { StorefrontFooter } from "@/app/components/storefront-footer";
 import { StorefrontHeader } from "@/app/components/storefront-header";
 import { toStoreProduct } from "@/app/lib/product-data";
+import { listPublicCatalog } from "@/app/lib/catalog-data";
 import { prisma } from "@/app/lib/prisma";
 import { publicProductPolicy } from "@/app/lib/product-visibility";
 
@@ -14,7 +15,7 @@ export default async function Home() {
   const [categories, brands, products, stores] = await Promise.all([
     prisma.category.findMany({ where: { active: true, parentId: null }, select: { name: true, slug: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], take: 8 }),
     prisma.brand.findMany({ where: { active: true }, select: { name: true, slug: true }, orderBy: { name: "asc" }, take: 8 }),
-    prisma.product.findMany({ where: { ...publicProductPolicy, stock: { gt: 0 } }, include: { seller: true }, orderBy: { createdAt: "desc" }, take: 8 }),
+    listPublicCatalog({ inStock: true, take: 8 }).then((result) => result.products),
     prisma.sellerProfile.findMany({ where: { status: "APPROVED", products: { some: publicProductPolicy } }, select: { storeName: true, storeSlug: true, description: true }, take: 4 }),
   ]);
   const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";

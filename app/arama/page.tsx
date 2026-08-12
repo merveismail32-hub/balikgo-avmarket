@@ -5,13 +5,12 @@ import { ProductCard } from "@/app/components/product-card";
 import { StorefrontFooter } from "@/app/components/storefront-footer";
 import { StorefrontHeader } from "@/app/components/storefront-header";
 import {
-  listingOrder,
-  listingWhere,
   PAGE_SIZE,
   parseListing,
   type ListingQuery,
 } from "@/app/lib/listing";
 import { toStoreProduct } from "@/app/lib/product-data";
+import { listPublicCatalog } from "@/app/lib/catalog-data";
 import { prisma } from "@/app/lib/prisma";
 
 export const metadata: Metadata = {
@@ -35,15 +34,14 @@ export default async function SearchPage({
       filters.inStock ||
       filters.rating,
   );
-  const where = listingWhere(filters);
-  const [categories, brands, rows, total] = await Promise.all([
+  const [categories, brands, catalogResult] = await Promise.all([
     prisma.category.findMany({ where: { active: true }, select: { name: true, slug: true }, orderBy: { name: "asc" } }),
     prisma.brand.findMany({ where: { active: true }, select: { name: true, slug: true }, orderBy: { name: "asc" } }),
     hasCriteria
-      ? prisma.product.findMany({ where, include: { seller: true }, orderBy: listingOrder(filters.sort), skip: (filters.page - 1) * PAGE_SIZE, take: PAGE_SIZE })
-      : Promise.resolve([]),
-    hasCriteria ? prisma.product.count({ where }) : Promise.resolve(0),
+      ? listPublicCatalog({ ...filters, skip: (filters.page - 1) * PAGE_SIZE, take: PAGE_SIZE })
+      : Promise.resolve({ products: [], total: 0 }),
   ]);
+  const { products: rows, total } = catalogResult;
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">

@@ -20,7 +20,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const item = await tx.orderItem.findFirst({ where: { id, order: { userId: session.user.id } }, select: { id: true, orderId: true, sellerId: true, productId: true, productName: true, quantity: true, unitPrice: true, status: true, order: { select: { orderNumber: true, payment: { select: { id: true } } } } } });
+      const item = await tx.orderItem.findFirst({ where: { id, order: { userId: session.user.id } }, select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, status: true, order: { select: { orderNumber: true, payment: { select: { id: true } } } } } });
       if (!item) return null;
       if (parsed.data.action === "CANCEL") {
         if (item.status === "CANCELLED") return { status: "CANCELLED", idempotent: true };
@@ -28,6 +28,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         const changed = await tx.orderItem.updateMany({ where: { id: item.id, status: item.status, order: { userId: session.user.id } }, data: { status: "CANCELLED" } });
         if (!changed.count) throw new Error("CONCURRENT_CHANGE");
         await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
+        if (item.sellerOfferId) await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } } });
         await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED" } });
         await tx.orderStatusHistory.create({ data: { orderItemId: item.id, changedByUserId: session.user.id, fromStatus: item.status, toStatus: "CANCELLED" } });
         await tx.financialAuditEvent.create({ data: { paymentId: item.order.payment?.id, orderId: item.orderId, actorUserId: session.user.id, entityType: "ORDER_ITEM", entityId: item.id, eventType: "CUSTOMER_CANCELLED", fromStatus: item.status, toStatus: "CANCELLED", source: "CUSTOMER" } });

@@ -12,7 +12,7 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
   if (!seller) return NextResponse.json({ error: "Satıcı yetkisi gerekli." }, { status: 403 });
   const { id } = await params; const parsed = updateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Geçersiz ürün bilgisi." }, { status: 400 });
-  const current = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { name: true, categoryId: true, brandId: true, description: true, imageUrl: true, images: true, technicalDetails: true } });
+  const current = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { name: true, categoryId: true, brandId: true, description: true, imageUrl: true, images: true, technicalDetails: true, catalogProductId: true } });
   if (!current) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
   const requestedCategoryId = parsed.data.categoryId === "__legacy__" ? undefined : parsed.data.categoryId;
   const category = requestedCategoryId ? await prisma.category.findFirst({ where: { id: requestedCategoryId, ...(requestedCategoryId === current.categoryId ? {} : { active: true }) }, select: { id: true, name: true } }) : null;
@@ -21,10 +21,25 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
   const brand = requestedBrandId ? await prisma.brand.findFirst({ where: { id: requestedBrandId, ...(requestedBrandId === current.brandId ? {} : { active: true }) }, select: { id: true, name: true } }) : null;
   if (requestedBrandId && !brand) return NextResponse.json({ error: "Seçilen marka bulunamadı veya aktif değil." }, { status: 400 });
   const critical = (parsed.data.name !== undefined && parsed.data.name !== current.name) || (requestedCategoryId !== undefined && requestedCategoryId !== current.categoryId) || (requestedBrandId !== undefined && requestedBrandId !== current.brandId) || (parsed.data.description !== undefined && parsed.data.description !== current.description) || (parsed.data.imageUrl !== undefined && parsed.data.imageUrl !== current.imageUrl) || (parsed.data.technicalDetails !== undefined && parsed.data.technicalDetails !== current.technicalDetails) || (parsed.data.images !== undefined && JSON.stringify(parsed.data.images) !== JSON.stringify(current.images));
+  if (critical && current.catalogProductId && await prisma.sellerOffer.count({ where: { catalogProductId: current.catalogProductId } }) > 1) return NextResponse.json({ error: "Ortak katalog içeriği birden fazla satıcıyı etkilediği için yönetici incelemesi gerektirir." }, { status: 409 });
   const { categoryId, brandId, ...fields } = parsed.data;
-  const data = { ...fields, ...(categoryId !== undefined && categoryId !== "__legacy__" && category ? { categoryId: category.id, category: category.name } : {}), ...(brandId !== undefined && brandId !== "__legacy__" ? { brandId: brand?.id ?? null, brand: brand?.name ?? "Markasız" } : {}), ...(fields.sku !== undefined ? { sku: normalizeSku(fields.sku) } : {}), ...(critical ? { moderationStatus: "PENDING" as const, moderationReason: null, moderatedAt: null } : {}) };
-  try { const result = await prisma.product.updateMany({ where: { id, sellerId: seller.id }, data }); return result.count ? NextResponse.json({ ok: true }) : NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 }); }
-  catch (error) { if (isDuplicateSellerSkuError(error)) return NextResponse.json({ error: duplicateSkuMessage }, { status: 409 }); throw error; }
+  const normalizedSku = fields.sku !== undefined ? normalizeSku(fields.sku) : undefined;
+  const data = { ...fields, ...(categoryId !== undefined && categoryId !== "__legacy__" && category ? { categoryId: category.id, category: category.name } : {}), ...(brandId !== undefined && brandId !== "__legacy__" ? { brandId: brand?.id ?? null, brand: brand?.name ?? "Markasız" } : {}), ...(normalizedSku !== undefined ? { sku: normalizedSku } : {}), ...(critical ? { moderationStatus: "PENDING" as const, moderationReason: null, moderatedAt: null } : {}) };
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.product.update({ where: { id }, data });
+      await tx.sellerOffer.updateMany({ where: { legacyProductId: id, sellerId: seller.id }, data: { ...(fields.price !== undefined ? { price: fields.price } : {}), ...(fields.oldPrice !== undefined ? { listPrice: fields.oldPrice } : {}), ...(fields.stock !== undefined ? { stock: fields.stock } : {}), ...(fields.active !== undefined ? { active: fields.active } : {}), ...(normalizedSku !== undefined ? { sellerSku: normalizedSku } : {}) } });
+      if (critical && current.catalogProductId) await tx.catalogProduct.update({ where: { id: current.catalogProductId }, data: { ...(fields.name !== undefined ? { name: fields.name } : {}), ...(category ? { categoryId: category.id, category: category.name } : {}), ...(brandId !== undefined && brandId !== "__legacy__" ? { brandId: brand?.id ?? null, brand: brand?.name ?? "Markasız" } : {}), ...(fields.description !== undefined ? { description: fields.description } : {}), ...(fields.imageUrl !== undefined ? { imageUrl: fields.imageUrl } : {}), ...(fields.images !== undefined ? { images: fields.images } : {}), ...(fields.technicalDetails !== undefined ? { technicalDetails: fields.technicalDetails } : {}), moderationStatus: "PENDING", moderationReason: null, moderatedAt: null } });
+    });
+    return NextResponse.json({ ok: true });
+  } catch (error) { if (isDuplicateSellerSkuError(error)) return NextResponse.json({ error: duplicateSkuMessage }, { status: 409 }); throw error; }
 }
 
-export async function DELETE(_: Request, { params }: RouteContext<"/api/seller/products/[id]">) { const seller = await getApprovedSeller(); if (!seller) return NextResponse.json({ error: "Satıcı yetkisi gerekli." }, { status: 403 }); const { id } = await params; const result = await prisma.product.updateMany({ where: { id, sellerId: seller.id }, data: { active: false } }); return result.count ? NextResponse.json({ ok: true }) : NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 }); }
+export async function DELETE(_: Request, { params }: RouteContext<"/api/seller/products/[id]">) {
+  const seller = await getApprovedSeller(); if (!seller) return NextResponse.json({ error: "Satıcı yetkisi gerekli." }, { status: 403 });
+  const { id } = await params;
+  const found = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true } });
+  if (!found) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
+  await prisma.$transaction([prisma.product.update({ where: { id }, data: { active: false } }), prisma.sellerOffer.updateMany({ where: { legacyProductId: id, sellerId: seller.id }, data: { active: false } })]);
+  return NextResponse.json({ ok: true });
+}

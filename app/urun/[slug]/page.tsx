@@ -7,17 +7,22 @@ import { ProductPurchaseActions } from "@/app/components/product-purchase-action
 import { ProductReviews } from "@/app/components/product-reviews";
 import { StorefrontFooter } from "@/app/components/storefront-footer";
 import { StorefrontHeader } from "@/app/components/storefront-header";
+import { findPublicCatalogBySlug, listPublicCatalog, toStoreCatalogProduct } from "@/app/lib/catalog-data";
 import { toStoreProduct } from "@/app/lib/product-data";
-import { prisma } from "@/app/lib/prisma";
-import { publicProductPolicy } from "@/app/lib/product-visibility";
 
-async function getProduct(slug: string) { return prisma.product.findFirst({ where: { slug, ...publicProductPolicy }, include: { seller: true, categoryRecord: true, brandRecord: true } }); }
+async function getProduct(slug: string) {
+  const catalog = await findPublicCatalogBySlug(slug);
+  if (!catalog) return null;
+  const offer = catalog.offers.find((entry) => entry.stock > 0 && entry.legacyProduct) ?? catalog.offers.find((entry) => entry.legacyProduct);
+  return offer?.legacyProduct ? { ...catalog, id: offer.legacyProduct.id, sku: offer.sellerSku, price: offer.price, stock: offer.stock, seller: offer.seller } : null;
+}
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> { const product = await getProduct((await params).slug); return product ? { title: product.name, description: product.description.slice(0, 160), alternates: { canonical: `/urun/${product.slug}` } } : { title: "Ürün bulunamadı", robots: { index: false } }; }
 
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const row = await getProduct((await params).slug); if (!row) notFound();
-  const product = toStoreProduct(row);
-  const related = await prisma.product.findMany({ where: { ...publicProductPolicy, id: { not: row.id }, OR: [...(row.categoryId ? [{ categoryId: row.categoryId }] : []), ...(row.brandId ? [{ brandId: row.brandId }] : [])] }, include: { seller: true }, take: 4, orderBy: { rating: "desc" } });
+  const catalogRow = await findPublicCatalogBySlug(row.slug); if (!catalogRow) notFound();
+  const product = toStoreCatalogProduct(catalogRow); if (!product) notFound();
+  const related = (await listPublicCatalog({ ...(row.categoryId ? { categoryId: row.categoryId } : {}), sort: "rating_desc", take: 5 })).products.filter((item) => item.catalogProductId !== catalogRow.id).slice(0, 4);
   const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   const productJson = { "@context": "https://schema.org", "@type": "Product", name: row.name, image: product.images, description: row.description, sku: row.sku ?? undefined, offers: { "@type": "Offer", price: row.price.toString(), priceCurrency: "TRY", availability: row.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock", url: `${base}/urun/${row.slug}` }, ...(row.reviewCount > 0 ? { aggregateRating: { "@type": "AggregateRating", ratingValue: row.rating, reviewCount: row.reviewCount } } : {}) };
   const categoryName = row.categoryRecord?.name ?? row.category;

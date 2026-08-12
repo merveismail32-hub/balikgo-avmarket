@@ -9,6 +9,7 @@ import { publicProductPolicy } from "@/app/lib/product-visibility";
 import { normalizeCouponCode } from "@/app/lib/coupon";
 import { evaluateCoupon } from "@/app/lib/coupon-evaluation";
 import { customerOrderSelect } from "@/app/lib/customer-order-select";
+import { ensureCatalogForProduct } from "@/app/lib/catalog-sync";
 
 const checkoutSchema = z.object({
   clientRequestId: z.string().uuid(),
@@ -33,21 +34,24 @@ export async function POST(request: Request) {
     const duplicate = await prisma.order.findUnique({ where: { clientRequestId }, select: { id: true, orderNumber: true } });
     if (duplicate) return NextResponse.json(duplicate);
     const order = await prisma.$transaction(async (tx) => {
-      const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) }, ...publicProductPolicy }, include: { seller: true } });
+      for (const item of items) await ensureCatalogForProduct(tx, item.productId);
+      const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) }, ...publicProductPolicy }, include: { seller: true, sellerOffer: true } });
       if (products.length !== items.length) throw new Error("Sepetteki ürünlerden biri artık satışta değil.");
+      if (products.some((product) => !product.sellerOffer || !product.catalogProductId || !product.sellerOffer.active)) throw new Error("Sepetteki satıcı teklifi artık satışta değil.");
       const productById = new Map(products.map((product) => [product.id, product]));
       let total = new Prisma.Decimal(0);
       for (const item of items) {
         const product = productById.get(item.productId);
-        if (!product || product.stock < item.quantity) throw new Error(`${product?.name ?? "Ürün"} için yeterli stok yok.`);
-        const changed = await tx.product.updateMany({ where: { id: product.id, active: true, stock: { gte: item.quantity } }, data: { stock: { decrement: item.quantity } } });
+        if (!product?.sellerOffer || product.sellerOffer.stock < item.quantity) throw new Error(`${product?.name ?? "Ürün"} için yeterli stok yok.`);
+        const changed = await tx.sellerOffer.updateMany({ where: { id: product.sellerOffer.id, sellerId: product.sellerId, active: true, stock: { gte: item.quantity } }, data: { stock: { decrement: item.quantity } } });
         if (!changed.count) throw new Error(`${product.name} için stok güncellendi; sepetinizi yeniden kontrol edin.`);
-        total = total.add(product.price.mul(item.quantity)).toDecimalPlaces(2);
+        await tx.product.update({ where: { id: product.id }, data: { stock: { decrement: item.quantity } } });
+        total = total.add(product.sellerOffer.price.mul(item.quantity)).toDecimalPlaces(2);
       }
       const subtotal=total;let coupon=null;let discount=new Prisma.Decimal(0);let discounts=new Map<string,Prisma.Decimal>();
       if(requestedCouponCode){const evaluated=await evaluateCoupon(tx,{code:requestedCouponCode,userId:session.user.id,lines:items.map((item)=>({productId:item.productId,quantity:item.quantity,product:productById.get(item.productId)!}))});coupon=evaluated.coupon;discount=evaluated.discount;discounts=evaluated.discounts;total=subtotal.minus(discount);}
       const orderNumber = `BG-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const money = commissionFor(product.price.mul(item.quantity).minus(itemDiscount),1, commissionRateForSeller(product.sellerId)); return { productId: product.id, sellerId: product.sellerId, productName: product.name, productSku: product.sku, productImageUrl: product.imageUrl, unitPrice: product.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, statusHistory: { create: { toStatus: "NEW" } } }; }) } }, include: internalIncludes });
+      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!;const offer=product.sellerOffer!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const money = commissionFor(offer.price.mul(item.quantity).minus(itemDiscount),1, commissionRateForSeller(product.sellerId)); return { productId: product.id, catalogProductId: product.catalogProductId, sellerOfferId: offer.id, sellerId: product.sellerId, productName: product.name, productSku: offer.sellerSku, productImageUrl: product.imageUrl, unitPrice: offer.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, statusHistory: { create: { toStatus: "NEW" } } }; }) } }, include: internalIncludes });
       if(coupon){const claimed=await tx.coupon.updateMany({where:{id:coupon.id,active:true,usageCount:coupon.usageCount},data:{usageCount:{increment:1}}});if(!claimed.count)throw new Error("Kupon kullanım limiti eşzamanlı olarak doldu.");await tx.couponRedemption.create({data:{couponId:coupon.id,userId:session.user.id,orderId:created.id,discountAmount:discount}});}
       await tx.payment.create({ data: { orderId: created.id, amount: created.totalAmount, provider: "TEST_PENDING", idempotencyKey: `order:${clientRequestId}:payment`, status: "PENDING", metadata: { note: "Gerçek ödeme sağlayıcısı bağlanmadı." } } });
       for (const orderItem of created.items) {

@@ -5,8 +5,9 @@ import { ListingControls, Pagination } from "@/app/components/listing-controls";
 import { ProductCard } from "@/app/components/product-card";
 import { StorefrontFooter } from "@/app/components/storefront-footer";
 import { StorefrontHeader } from "@/app/components/storefront-header";
-import { listingOrder, listingWhere, PAGE_SIZE, parseListing, type ListingQuery } from "@/app/lib/listing";
+import { PAGE_SIZE, parseListing, type ListingQuery } from "@/app/lib/listing";
 import { toStoreProduct } from "@/app/lib/product-data";
+import { listPublicCatalog } from "@/app/lib/catalog-data";
 import { prisma } from "@/app/lib/prisma";
 
 async function getBrand(slug: string) {
@@ -24,12 +25,11 @@ export default async function BrandPage({ params, searchParams }: { params: Prom
   const [brand, query] = await Promise.all([getBrand((await params).slug), searchParams]);
   if (!brand) notFound();
   const filters = parseListing(query);
-  const where = listingWhere(filters, { brandId: brand.id });
-  const [categories, rows, total] = await Promise.all([
+  const [categories, catalogResult] = await Promise.all([
     prisma.category.findMany({ where: { active: true }, select: { name: true, slug: true }, orderBy: { name: "asc" } }),
-    prisma.product.findMany({ where, include: { seller: true }, orderBy: listingOrder(filters.sort), skip: (filters.page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
-    prisma.product.count({ where }),
+    listPublicCatalog({ ...filters, brandId: brand.id, skip: (filters.page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
   ]);
+  const { products: rows, total } = catalogResult;
   const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const breadcrumb = { "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement: [{ "@type": "ListItem", position: 1, name: "Ana Sayfa", item: base }, { "@type": "ListItem", position: 2, name: brand.name, item: `${base}/marka/${brand.slug}` }] };
 
