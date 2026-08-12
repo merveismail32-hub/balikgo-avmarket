@@ -56,6 +56,7 @@ export default function CartPage() {
     removeItem,
     clearCart,
   } = useCart();
+  const hasUnavailableOffer = items.some((item) => item.offerAvailable === false);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
@@ -125,6 +126,7 @@ export default function CartPage() {
                       <p className="mt-2 text-sm text-slate-500">
                         Birim fiyat: <span className="font-bold text-slate-900">{item.price}</span>
                       </p>
+                      {item.offerAvailable === false && <p className="mt-2 rounded-lg bg-red-50 p-2 text-sm font-bold text-red-700">Seçili satıcı teklifi artık uygun değil. Sepete başka bir teklifi açıkça ekleyin.</p>}
 
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
                         <div className="flex h-11 w-32 items-center justify-between rounded-xl border bg-white px-3">
@@ -181,12 +183,7 @@ export default function CartPage() {
                   <span className="text-lg font-black">Genel toplam</span>
                   <span className="text-2xl font-black text-slate-950">{formatPrice(subtotal)}</span>
                 </div>
-                <Link
-                  href="/checkout"
-                  className="mt-6 w-full rounded-xl bg-sky-500 py-4 font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-600"
-                >
-                  Güvenli Ödemeye Geç →
-                </Link>
+                {hasUnavailableOffer ? <span className="mt-6 block w-full cursor-not-allowed rounded-xl bg-slate-300 py-4 text-center font-bold text-slate-600">Önce uygun olmayan teklifi güncelleyin</span> : <Link href="/checkout" className="mt-6 block w-full rounded-xl bg-sky-500 py-4 text-center font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-600">Güvenli Ödemeye Geç →</Link>}
                 <Link
                   href="/"
                   className="mt-3 block w-full rounded-xl border border-slate-200 py-3 text-center text-sm font-bold text-slate-700 transition hover:border-sky-500 hover:text-sky-600"

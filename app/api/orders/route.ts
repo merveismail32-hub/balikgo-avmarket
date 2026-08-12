@@ -10,11 +10,12 @@ import { normalizeCouponCode } from "@/app/lib/coupon";
 import { evaluateCoupon } from "@/app/lib/coupon-evaluation";
 import { customerOrderSelect } from "@/app/lib/customer-order-select";
 import { ensureCatalogForProduct } from "@/app/lib/catalog-sync";
+import { revalidateOffer } from "@/app/lib/buybox";
 
 const checkoutSchema = z.object({
   clientRequestId: z.string().uuid(),
   address: z.object({ recipientName: z.string().trim().min(3).max(120), phone: z.string().trim().min(8).max(30), city: z.string().trim().min(2).max(80), district: z.string().trim().min(2).max(80), address: z.string().trim().min(10).max(600), postalCode: z.string().trim().max(20).optional() }),
-  items: z.array(z.object({ productId: z.string().min(1), quantity: z.number().int().min(1).max(99) })).min(1).max(50),
+  items: z.array(z.object({ productId: z.string().min(1), catalogProductId: z.string().min(1).optional(), sellerOfferId: z.string().min(1).optional(), quantity: z.number().int().min(1).max(99) }).strict()).min(1).max(50),
   couponCode: z.string().max(50).optional(),
 }).strict().superRefine((value, context) => {
   const productIds = value.items.map((item) => item.productId);
@@ -35,17 +36,21 @@ export async function POST(request: Request) {
     if (duplicate) return NextResponse.json(duplicate);
     const order = await prisma.$transaction(async (tx) => {
       for (const item of items) await ensureCatalogForProduct(tx, item.productId);
-      const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) }, ...publicProductPolicy }, include: { seller: true, sellerOffer: true } });
+      const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) }, ...publicProductPolicy }, include: { seller: true, sellerOffer: { include: { seller: true, catalogProduct: true } } } });
       if (products.length !== items.length) throw new Error("Sepetteki ürünlerden biri artık satışta değil.");
       if (products.some((product) => !product.sellerOffer || !product.catalogProductId || !product.sellerOffer.active)) throw new Error("Sepetteki satıcı teklifi artık satışta değil.");
       const productById = new Map(products.map((product) => [product.id, product]));
       let total = new Prisma.Decimal(0);
       for (const item of items) {
         const product = productById.get(item.productId);
-        if (!product?.sellerOffer || product.sellerOffer.stock < item.quantity) throw new Error(`${product?.name ?? "Ürün"} için yeterli stok yok.`);
+        if (!product?.sellerOffer || !product.catalogProductId) throw new Error("Sepetteki satıcı teklifi artık satışta değil.");
+        if ((item.sellerOfferId && item.sellerOfferId !== product.sellerOffer.id) || (item.catalogProductId && item.catalogProductId !== product.catalogProductId) || product.sellerOffer.catalogProductId !== product.catalogProductId || product.sellerOffer.sellerId !== product.sellerId) throw new Error("Sepetteki ürün ile satıcı teklifi eşleşmiyor.");
+        const validation = revalidateOffer(product.sellerOffer.catalogProduct, { ...product.sellerOffer, price: Number(product.sellerOffer.price), sellerStatus: product.sellerOffer.seller.status }, item.quantity);
+        if (!validation.eligible) throw new Error(`${product.name} için seçili satıcı teklifi artık uygun değil.`);
         const changed = await tx.sellerOffer.updateMany({ where: { id: product.sellerOffer.id, sellerId: product.sellerId, active: true, stock: { gte: item.quantity } }, data: { stock: { decrement: item.quantity } } });
         if (!changed.count) throw new Error(`${product.name} için stok güncellendi; sepetinizi yeniden kontrol edin.`);
-        await tx.product.update({ where: { id: product.id }, data: { stock: { decrement: item.quantity } } });
+        const currentOffer = await tx.sellerOffer.findUniqueOrThrow({ where: { id: product.sellerOffer.id }, select: { stock: true } });
+        await tx.product.update({ where: { id: product.id }, data: { stock: currentOffer.stock } });
         total = total.add(product.sellerOffer.price.mul(item.quantity)).toDecimalPlaces(2);
       }
       const subtotal=total;let coupon=null;let discount=new Prisma.Decimal(0);let discounts=new Map<string,Prisma.Decimal>();

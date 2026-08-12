@@ -7,13 +7,14 @@ import { ProductPurchaseActions } from "@/app/components/product-purchase-action
 import { ProductReviews } from "@/app/components/product-reviews";
 import { StorefrontFooter } from "@/app/components/storefront-footer";
 import { StorefrontHeader } from "@/app/components/storefront-header";
-import { findPublicCatalogBySlug, listPublicCatalog, toStoreCatalogProduct } from "@/app/lib/catalog-data";
+import { findPublicCatalogBySlug, listPublicCatalog, toStoreCatalogProductWithPerformance } from "@/app/lib/catalog-data";
 import { toStoreProduct } from "@/app/lib/product-data";
 
 async function getProduct(slug: string) {
   const catalog = await findPublicCatalogBySlug(slug);
   if (!catalog) return null;
-  const offer = catalog.offers.find((entry) => entry.stock > 0 && entry.legacyProduct) ?? catalog.offers.find((entry) => entry.legacyProduct);
+  const resolved = await toStoreCatalogProductWithPerformance(catalog);
+  const offer = catalog.offers.find((entry) => entry.id === resolved?.sellerOfferId && entry.legacyProduct);
   return offer?.legacyProduct ? { ...catalog, id: offer.legacyProduct.id, sku: offer.sellerSku, price: offer.price, stock: offer.stock, seller: offer.seller } : null;
 }
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> { const product = await getProduct((await params).slug); return product ? { title: product.name, description: product.description.slice(0, 160), alternates: { canonical: `/urun/${product.slug}` } } : { title: "Ürün bulunamadı", robots: { index: false } }; }
@@ -21,10 +22,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const row = await getProduct((await params).slug); if (!row) notFound();
   const catalogRow = await findPublicCatalogBySlug(row.slug); if (!catalogRow) notFound();
-  const product = toStoreCatalogProduct(catalogRow); if (!product) notFound();
+  const product = await toStoreCatalogProductWithPerformance(catalogRow); if (!product) notFound();
   const related = (await listPublicCatalog({ ...(row.categoryId ? { categoryId: row.categoryId } : {}), sort: "rating_desc", take: 5 })).products.filter((item) => item.catalogProductId !== catalogRow.id).slice(0, 4);
   const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  const productJson = { "@context": "https://schema.org", "@type": "Product", name: row.name, image: product.images, description: row.description, sku: row.sku ?? undefined, offers: { "@type": "Offer", price: row.price.toString(), priceCurrency: "TRY", availability: row.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock", url: `${base}/urun/${row.slug}` }, ...(row.reviewCount > 0 ? { aggregateRating: { "@type": "AggregateRating", ratingValue: row.rating, reviewCount: row.reviewCount } } : {}) };
+  const productJson = { "@context": "https://schema.org", "@type": "Product", name: row.name, image: product.images, description: row.description, sku: row.sku ?? undefined, offers: { "@type": "Offer", price: product.unitPrice, priceCurrency: "TRY", availability: (product.stock ?? 0) > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock", url: `${base}/urun/${row.slug}` }, ...(row.reviewCount > 0 ? { aggregateRating: { "@type": "AggregateRating", ratingValue: row.rating, reviewCount: row.reviewCount } } : {}) };
   const categoryName = row.categoryRecord?.name ?? row.category;
   const categoryUrl = row.categoryRecord ? `${base}/kategori/${row.categoryRecord.slug}` : undefined;
   const breadcrumbJson = { "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement: [{ "@type": "ListItem", position: 1, name: "Ana Sayfa", item: base }, { "@type": "ListItem", position: 2, name: categoryName, ...(categoryUrl ? { item: categoryUrl } : {}) }, { "@type": "ListItem", position: 3, name: row.name, item: `${base}/urun/${row.slug}` }] };

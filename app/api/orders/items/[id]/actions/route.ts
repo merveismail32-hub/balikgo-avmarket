@@ -27,8 +27,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         if (item.status !== "NEW" && item.status !== "PREPARING") throw new Error("INVALID_STATE");
         const changed = await tx.orderItem.updateMany({ where: { id: item.id, status: item.status, order: { userId: session.user.id } }, data: { status: "CANCELLED" } });
         if (!changed.count) throw new Error("CONCURRENT_CHANGE");
-        await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
-        if (item.sellerOfferId) await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } } });
+        if (item.sellerOfferId) {
+          const offer = await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } }, select: { stock: true } });
+          await tx.product.update({ where: { id: item.productId }, data: { stock: offer.stock } });
+        } else {
+          await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
+        }
         await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED" } });
         await tx.orderStatusHistory.create({ data: { orderItemId: item.id, changedByUserId: session.user.id, fromStatus: item.status, toStatus: "CANCELLED" } });
         await tx.financialAuditEvent.create({ data: { paymentId: item.order.payment?.id, orderId: item.orderId, actorUserId: session.user.id, entityType: "ORDER_ITEM", entityId: item.id, eventType: "CUSTOMER_CANCELLED", fromStatus: item.status, toStatus: "CANCELLED", source: "CUSTOMER" } });

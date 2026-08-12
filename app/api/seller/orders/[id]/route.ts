@@ -81,8 +81,12 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
       await tx.orderStatusHistory.create({ data: { orderItemId: id, changedByUserId: seller.userId, fromStatus: item.status, toStatus: target } });
       await enqueueNotifications(tx, [{ userId: item.order.userId, orderId: item.orderId, type: `ORDER_${target}`, dedupeKey: `order-status:${id}:${target}:customer`, title: "Sipariş durumu güncellendi", message: `${item.order.orderNumber} siparişindeki ${item.productName} ürünü için yeni durum: ${ORDER_STATUS_LABELS[target]}.` }]);
       if (target === "CANCELLED") {
-        await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
-        if (item.sellerOfferId) await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } } });
+        if (item.sellerOfferId) {
+          const offer = await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } }, select: { stock: true } });
+          await tx.product.update({ where: { id: item.productId }, data: { stock: offer.stock } });
+        } else {
+          await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
+        }
         await tx.sellerPayout.updateMany({ where: { orderItemId: id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED" } });
       }
       if (target === "DELIVERED" && item.order.payment?.status === "PAID") await tx.sellerPayout.updateMany({ where: { orderItemId: id, status: "PENDING" }, data: { status: "AVAILABLE", availableAt: new Date() } });

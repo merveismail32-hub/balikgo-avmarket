@@ -22,6 +22,9 @@ export type Product = {
   technicalDetails?: string;
   shippingInfo?: string;
   offerCount?: number;
+  handlingTimeDays?: number | null;
+  alternatives?: Array<{ sellerOfferId: string; sellerName: string; storeSlug?: string; price: string; unitPrice: number; stock: number; handlingTimeDays: number | null }>;
+  offerAvailable?: boolean;
 };
 
 export type Category = {
