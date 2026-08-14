@@ -1,13 +1,12 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, type OrderStatus } from "@prisma/client";
+import { type OrderStatus } from "@prisma/client";
+import { createGuardedTestPrisma } from "./guarded-test-prisma";
 
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("Veritabanı bağlantısı yapılandırılmamış.");
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const prisma = createGuardedTestPrisma();
 const prefix = "e2e-final-qa-";
 const marker = `[E2E FINAL QA]`;
+const fixtureUserIds: string[] = [];
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 function aggregate(statuses: OrderStatus[]): OrderStatus {
@@ -20,9 +19,8 @@ function aggregate(statuses: OrderStatus[]): OrderStatus {
   return "NEW";
 }
 async function cleanup() {
-  const users = await prisma.user.findMany({ where: { email: { startsWith: prefix, endsWith: "@invalid.local" } }, select: { id: true } });
-  if (!users.length) return;
-  const userIds = users.map((user) => user.id);
+  if (!fixtureUserIds.length) return;
+  const userIds = fixtureUserIds;
   await prisma.order.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
 }
@@ -49,6 +47,7 @@ async function main() {
     const sellerA = await prisma.user.create({ data: { name: "E2E", surname: "Satıcı A", email: `${prefix}seller-a-${suffix}@invalid.local`, phone: "0000000000", passwordHash, role: "SELLER", sellerProfile: { create: { storeName: `${marker} Satıcı A`, storeSlug: `${prefix}a-${suffix}`, companyType: "TEST", taxNumber: `QA-A-${suffix}`, taxOffice: "Test", city: "İstanbul", address: "Geçici QA kaydı", description: "Otomatik QA", status: "APPROVED" } } }, include: { sellerProfile: true } });
     const sellerB = await prisma.user.create({ data: { name: "E2E", surname: "Satıcı B", email: `${prefix}seller-b-${suffix}@invalid.local`, phone: "0000000000", passwordHash, role: "SELLER", sellerProfile: { create: { storeName: `${marker} Satıcı B`, storeSlug: `${prefix}b-${suffix}`, companyType: "TEST", taxNumber: `QA-B-${suffix}`, taxOffice: "Test", city: "İzmir", address: "Geçici QA kaydı", description: "Otomatik QA", status: "APPROVED" } } }, include: { sellerProfile: true } });
     const customer = await prisma.user.create({ data: { name: "E2E", surname: "Müşteri", email: `${prefix}customer-${suffix}@invalid.local`, phone: "0000000000", passwordHash } });
+    fixtureUserIds.push(sellerA.id, sellerB.id, customer.id);
     assert(await bcrypt.compare(password, customer.passwordHash), "Customer credential hash smoke test failed.");
     assert(await bcrypt.compare(password, sellerA.passwordHash), "Seller credential hash smoke test failed.");
     const product = await prisma.product.create({ data: { sellerId: sellerA.sellerProfile!.id, name: `${marker} Spin Olta`, slug: `${prefix}spin-${suffix}`, category: "Olta Makineleri", brand: "BalıkGo QA", price: 100, stock: 5, description: "Otomatik final QA ürünü", imageUrl: "/products/spin-olta-seti.jpg", images: ["/products/spin-olta-seti.jpg"], active: true } });

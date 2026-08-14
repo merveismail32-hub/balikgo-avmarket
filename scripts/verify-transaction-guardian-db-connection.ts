@@ -1,42 +1,25 @@
 import "server-only";
 
-import { readFileSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import { Client } from "pg";
+import { guardedTestConnectionOptions, TEST_DB_IDENTITY } from "./guarded-test-prisma";
 
-const expectedHost = "aws-0-ap-northeast-1.pooler.supabase.com";
-const expectedUser = "postgres.ikfalxycwusprjnhnxzf";
-const connectionString = process.env.DATABASE_URL;
-const caPath = process.env.SUPABASE_CA_CERT_PATH;
+const connection = guardedTestConnectionOptions();
+const connectionString = connection.connectionString;
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
 
-assert(connectionString, "TEST_DATABASE_URL_MISSING");
-assert(caPath, "SUPABASE_CA_CERT_PATH_MISSING");
 const target = new URL(connectionString);
-assert(
-  target.hostname === expectedHost
-    && target.port === "5432"
-    && decodeURIComponent(target.username) === expectedUser
-    && target.pathname === "/postgres",
-  "REFUSING_NON_TEST_DATABASE",
-);
-assert(
-  !/(?:sslmode=(?:disable|no-verify)|rejectUnauthorized=false|uselibpqcompat=true)/i.test(target.search),
-  "REFUSING_INSECURE_TLS_CONFIGURATION",
-);
-
-const ca = readFileSync(caPath, "utf8");
-const ssl = { ca, rejectUnauthorized: true as const };
+const ssl = connection.ssl;
 const fields = {
   host: target.hostname,
   user: decodeURIComponent(target.username),
   password: decodeURIComponent(target.password),
   port: Number(target.port),
-  database: target.pathname.slice(1),
+  database: TEST_DB_IDENTITY.database,
   ssl,
 };
 

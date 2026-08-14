@@ -1,11 +1,8 @@
 import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
 import { ensureCatalogForProduct } from "../app/lib/catalog-sync";
+import { createGuardedOperationPrisma } from "./guarded-operation-prisma";
 
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("Database connection is not configured.");
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const prisma = createGuardedOperationPrisma("catalog-backfill", "write");
 
 async function main() {
   const ids = await prisma.product.findMany({ select: { id: true }, orderBy: { createdAt: "asc" } });

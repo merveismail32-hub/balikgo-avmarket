@@ -1,10 +1,8 @@
 import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { createGuardedTestPrisma } from "./guarded-test-prisma";
 
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("Database connection missing");
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const prisma = createGuardedTestPrisma();
 const rollback = new Error("ROLLBACK_FINANCE_QA");
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 async function counts() { return { orders: await prisma.order.count(), items: await prisma.orderItem.count(), payments: await prisma.payment.count(), payouts: await prisma.sellerPayout.count(), refunds: await prisma.refund.count(), events: await prisma.paymentEvent.count(), notifications: await prisma.notification.count() }; }

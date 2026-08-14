@@ -1,23 +1,16 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { cancelOrderItem, reconcileOrderPayouts, transitionOrderItem } from "../app/lib/order-orchestrator";
 import { isDuplicatePaymentEventConflict, processVerifiedPaymentEvent } from "../app/lib/payment-orchestrator";
 import { transitionSellerShipment } from "../app/lib/shipment-orchestrator";
+import { guardedTestConnectionOptions } from "./guarded-test-prisma";
 
-const connectionString = process.env.DATABASE_URL;
-const expectedHost = "aws-0-ap-northeast-1.pooler.supabase.com";
-const expectedUser = "postgres.ikfalxycwusprjnhnxzf";
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
-assert(connectionString, "TEST_DATABASE_URL_MISSING");
-const caPath = process.env.SUPABASE_CA_CERT_PATH;
-assert(caPath, "SUPABASE_CA_CERT_PATH_MISSING");
-const target = new URL(connectionString);
-assert(target.hostname === expectedHost && target.port === "5432" && decodeURIComponent(target.username) === expectedUser && target.pathname === "/postgres", "REFUSING_NON_TEST_DATABASE");
+const connection = guardedTestConnectionOptions();
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString, ssl: { ca: readFileSync(caPath, "utf8"), rejectUnauthorized: true } }),
+  adapter: new PrismaPg(connection),
   transactionOptions: { maxWait: 10_000, timeout: 30_000 },
 });
 

@@ -1,26 +1,24 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
+import { createGuardedTestPrisma } from "./guarded-test-prisma";
 
 const baseUrl = process.env.QA_BASE_URL ?? "http://localhost:3000";
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("Veritabanı bağlantısı yapılandırılmamış.");
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const prisma = createGuardedTestPrisma();
 const prefix = "e2e-checkout-api-";
+const fixture = { users: [] as string[], catalogs: [] as string[], products: [] as string[], offers: [] as string[], carts: [] as string[] };
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 function cookieValues(response: Response) { const headers = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [response.headers.get("set-cookie") ?? ""]; return headers.map((header) => header.split(";")[0]).filter(Boolean); }
-async function cleanup() { const users = await prisma.user.findMany({ where: { email: { startsWith: prefix, endsWith: "@invalid.local" } }, select: { id: true, sellerProfile: { select: { id: true, products: { select: { catalogProductId: true } } } } } }); const ids = users.map((user) => user.id); const sellerIds = users.flatMap((user) => user.sellerProfile ? [user.sellerProfile.id] : []); const catalogIds = [...new Set(users.flatMap((user) => user.sellerProfile?.products.map((product) => product.catalogProductId).filter((id): id is string => Boolean(id)) ?? []))]; if (ids.length) { await prisma.order.deleteMany({ where: { userId: { in: ids } } }); if (sellerIds.length) await prisma.sellerOffer.deleteMany({ where: { sellerId: { in: sellerIds } } }); await prisma.user.deleteMany({ where: { id: { in: ids } } }); if (catalogIds.length) await prisma.catalogProduct.deleteMany({ where: { id: { in: catalogIds }, offers: { none: {} } } }); } }
+async function cleanup() { const ids = (values: string[]) => ({ id: { in: values } }); if (fixture.users.length) { const orders = await prisma.order.findMany({ where: { userId: { in: fixture.users } }, select: { id: true } }); if (orders.length) await prisma.order.deleteMany({ where: ids(orders.map((order) => order.id)) }); } if (fixture.carts.length) await prisma.cartItem.deleteMany({ where: ids(fixture.carts) }); if (fixture.offers.length) await prisma.sellerOffer.deleteMany({ where: ids(fixture.offers) }); if (fixture.products.length) await prisma.product.deleteMany({ where: ids(fixture.products) }); if (fixture.users.length) await prisma.user.deleteMany({ where: ids(fixture.users) }); if (fixture.catalogs.length) await prisma.catalogProduct.deleteMany({ where: ids(fixture.catalogs) }); }
 async function main() {
   await cleanup();
   try {
     const suffix = crypto.randomUUID().slice(0, 10); const password = crypto.randomUUID(); const passwordHash = await bcrypt.hash(password, 12);
     const seller = await prisma.user.create({ data: { name: "QA", surname: "Seller", email: `${prefix}seller-${suffix}@invalid.local`, phone: "0000000000", passwordHash, role: "SELLER", sellerProfile: { create: { storeName: "E2E Checkout Seller", storeSlug: `${prefix}store-${suffix}`, companyType: "TEST", taxNumber: `QA-${suffix}`, taxOffice: "Test", city: "İstanbul", address: "Geçici test", description: "QA", status: "APPROVED" } } }, include: { sellerProfile: true } });
-    const customer = await prisma.user.create({ data: { name: "QA", surname: "Customer", email: `${prefix}customer-${suffix}@invalid.local`, phone: "0000000000", passwordHash } });
+    fixture.users.push(seller.id); const customer = await prisma.user.create({ data: { name: "QA", surname: "Customer", email: `${prefix}customer-${suffix}@invalid.local`, phone: "0000000000", passwordHash } }); fixture.users.push(customer.id);
     const catalog = await prisma.catalogProduct.create({ data: { slug: `${prefix}catalog-${suffix}`, identityKey: `QA-BUYBOX-${suffix}`, name: "E2E Checkout Product", category: "Olta Makineleri", brand: "QA", description: "Geçici checkout API test ürünü", imageUrl: "/products/olta-makinesi.jpg" } });
-    const product = await prisma.product.create({ data: { sellerId: seller.sellerProfile!.id, catalogProductId: catalog.id, name: catalog.name, slug: `${prefix}product-${suffix}`, category: catalog.category, brand: catalog.brand, price: 100, stock: 4, description: catalog.description, imageUrl: catalog.imageUrl, active: true } });
-    const offer = await prisma.sellerOffer.create({ data: { sellerId: seller.sellerProfile!.id, catalogProductId: catalog.id, legacyProductId: product.id, sellerSku: `QA-${suffix}`, price: 100, stock: 4 } });
-    await prisma.cartItem.create({ data: { userId: customer.id, productId: product.id, catalogProductId: catalog.id, sellerOfferId: offer.id, quantity: 1 } });
+    fixture.catalogs.push(catalog.id); const product = await prisma.product.create({ data: { sellerId: seller.sellerProfile!.id, catalogProductId: catalog.id, name: catalog.name, slug: `${prefix}product-${suffix}`, category: catalog.category, brand: catalog.brand, price: 100, stock: 4, description: catalog.description, imageUrl: catalog.imageUrl, active: true } }); fixture.products.push(product.id);
+    const offer = await prisma.sellerOffer.create({ data: { sellerId: seller.sellerProfile!.id, catalogProductId: catalog.id, legacyProductId: product.id, sellerSku: `QA-${suffix}`, price: 100, stock: 4 } }); fixture.offers.push(offer.id);
+    const cart = await prisma.cartItem.create({ data: { userId: customer.id, productId: product.id, catalogProductId: catalog.id, sellerOfferId: offer.id, quantity: 1 } }); fixture.carts.push(cart.id);
     const csrfResponse = await fetch(`${baseUrl}/api/auth/csrf`); assert(csrfResponse.ok, "CSRF endpoint başarısız."); const csrf = await csrfResponse.json() as { csrfToken?: string }; assert(csrf.csrfToken, "CSRF token alınamadı."); const cookies = cookieValues(csrfResponse);
     const login = await fetch(`${baseUrl}/api/auth/callback/credentials`, { method: "POST", redirect: "manual", headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookies.join("; ") }, body: new URLSearchParams({ csrfToken: csrf.csrfToken!, email: customer.email, password, callbackUrl: `${baseUrl}/checkout`, json: "true" }) });
     cookies.push(...cookieValues(login)); assert(login.status === 200 || login.status === 302, `Credentials login başarısız: HTTP ${login.status}`); assert(cookies.some((cookie) => /authjs\.session-token|next-auth\.session-token/.test(cookie)), "Oturum çerezi oluşturulmadı.");

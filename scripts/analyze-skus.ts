@@ -1,9 +1,6 @@
 import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
-if (!connectionString) throw new Error("Veritabanı bağlantısı yapılandırılmamış.");
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+import { createGuardedOperationPrisma } from "./guarded-operation-prisma";
+const prisma = createGuardedOperationPrisma("analyze-skus", "read");
 async function main() {
   const products = await prisma.product.findMany({ select: { id: true, name: true, sellerId: true, sku: true, seller: { select: { storeName: true } } } });
   const normalized = new Map<string, typeof products>();

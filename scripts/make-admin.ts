@@ -1,12 +1,9 @@
 import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
+import { createGuardedOperationPrisma } from "./guarded-operation-prisma";
 
 const email = process.argv[2]?.normalize("NFKC").trim().toLocaleLowerCase("tr-TR");
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!email) throw new Error("Kullanım: npm run make-admin -- email@example.com");
-if (!connectionString) throw new Error("Veritabanı bağlantısı yapılandırılmamış.");
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const prisma = createGuardedOperationPrisma("make-admin", "write");
 
 async function main() {
   const user = await prisma.user.findFirst({
