@@ -302,6 +302,7 @@ model SellerOffer {
   legacyProduct    Product?            @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
   cartItems        CartItem[]
   orderItems       OrderItem[]
+  matchReviews     CatalogMatchReview[]
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
@@ -315,6 +316,7 @@ model SellerOffer {
 model CatalogMatchReview {
   id                        String                   @id @default(cuid())
   sellerId                  String
+  sellerOfferId             String?
   candidateCatalogProductId String?
   sellerSku                 String?                  @db.VarChar(80)
   proposedGtin              String?                  @db.VarChar(14)
@@ -326,15 +328,19 @@ model CatalogMatchReview {
   confidence                Decimal?                 @db.Decimal(5, 4)
   source                    String?                  @db.VarChar(50)
   externalSourceId          String?                  @db.VarChar(191)
+  fingerprint               String?                  @db.Char(64)
+  openFingerprint           String?                  @unique @db.Char(64)
   status                    CatalogMatchReviewStatus @default(PENDING)
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
   seller                    SellerProfile            @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  sellerOffer               SellerOffer?             @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
   candidateCatalogProduct   CatalogProduct?          @relation(fields: [candidateCatalogProductId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([sellerId, status, createdAt])
   @@index([candidateCatalogProductId, status])
+  @@index([sellerOfferId, status, createdAt])
 }
 
 model Order {

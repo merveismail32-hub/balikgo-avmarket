@@ -21,6 +21,8 @@
     "test:catalog-offers": "node --env-file=.env --conditions=react-server --import tsx scripts/verify-catalog-offers.ts",
     "test:catalog-intelligence": "node --conditions=react-server --experimental-strip-types scripts/verify-catalog-intelligence.ts",
     "test:catalog-intelligence-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-catalog-intelligence-db-e2e.ts",
+    "test:catalog-review-idempotency": "node --conditions=react-server --experimental-strip-types scripts/verify-catalog-match-review-idempotency.ts",
+    "test:catalog-review-idempotency-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-catalog-match-review-idempotency-db-e2e.ts",
     "test:buybox": "node --experimental-strip-types scripts/verify-buybox.ts",
     "test:transaction-guardian": "node --experimental-strip-types scripts/verify-transaction-guardian.ts",
     "test:transaction-guardian-db-connection": "node --env-file=.env --conditions=react-server --import tsx scripts/verify-transaction-guardian-db-connection.ts",

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { createOrGetOpenCatalogMatchReview } from "@/app/lib/catalog-match-review";
 import { decideCatalogMatch, normalizeCatalogText, parseGtin } from "@/app/lib/catalog-intelligence";
 import { getApprovedSeller } from "@/app/lib/seller-auth";
 import { prisma } from "@/app/lib/prisma";
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
       ]);
       const match = decideCatalogMatch({ gtin, sellerSku, normalizedName, normalizedBrand, normalizedModel, candidates, sellerSkuOffer });
       if (match.type === "CONFLICT" || match.type === "REVIEW_REQUIRED") {
-        await prisma.catalogMatchReview.create({ data: { sellerId: seller.id, candidateCatalogProductId: match.candidateIds[0] ?? match.catalogProductId, sellerSku, proposedGtin: gtin.valid ? gtin.normalized : null, normalizedName, normalizedBrand, normalizedModel, matchStatus: match.type, reasonCode: match.reason, confidence: match.confidence } });
+        await createOrGetOpenCatalogMatchReview(prisma, { sellerId: seller.id, sellerOfferId: sellerSkuOffer?.id ?? null, sellerSku, proposedGtin: gtin.valid ? gtin.normalized : null, candidateIds: match.candidateIds.length ? match.candidateIds : match.catalogProductId ? [match.catalogProductId] : [], normalizedName, normalizedBrand, normalizedModel, matchStatus: match.type, reasonCode: match.reason, confidence: match.confidence });
         return NextResponse.json({ error: match.type === "CONFLICT" ? "Katalog kimliği mevcut ürün verisiyle çelişiyor; yönetici incelemesi gerekli." : "Ürün otomatik birleştirilmedi; katalog incelemesi gerekli.", reasonCode: match.reason }, { status: 409 });
       }
       if (match.type === "SELLER_SKU_MATCH" && sellerSkuOffer?.legacyProductId) {
