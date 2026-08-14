@@ -32,6 +32,20 @@ enum ReviewStatus {
   REJECTED
 }
 
+enum CatalogMatchStatus {
+  EXACT_GTIN_MATCH
+  SELLER_SKU_MATCH
+  NEW_CATALOG_PRODUCT
+  REVIEW_REQUIRED
+  CONFLICT
+}
+
+enum CatalogMatchReviewStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+}
+
 enum CouponDiscountType {
   PERCENTAGE
   FIXED
@@ -145,32 +159,33 @@ model User {
 }
 
 model SellerProfile {
-  id              String                 @id @default(cuid())
-  userId          String                 @unique
-  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeName       String
-  storeSlug       String?                @unique
-  companyType     String
-  phone           String                 @default("")
-  taxNumber       String
-  taxOffice       String
-  city            String
-  address         String
-  description     String
-  categories      String                 @default("")
-  status          SellerStatus           @default(PENDING)
-  rejectionReason String?                @db.VarChar(500)
-  products        Product[]
-  offers          SellerOffer[]
-  orderItems      OrderItem[]
-  payouts         SellerPayout[]
-  refunds         Refund[]
-  notifications   Notification[]
-  coupons         Coupon[]
-  ledgerEntries   FinancialLedgerEntry[]
-  shipments       Shipment[]
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
+  id                  String                 @id @default(cuid())
+  userId              String                 @unique
+  user                User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeName           String
+  storeSlug           String?                @unique
+  companyType         String
+  phone               String                 @default("")
+  taxNumber           String
+  taxOffice           String
+  city                String
+  address             String
+  description         String
+  categories          String                 @default("")
+  status              SellerStatus           @default(PENDING)
+  rejectionReason     String?                @db.VarChar(500)
+  products            Product[]
+  offers              SellerOffer[]
+  catalogMatchReviews CatalogMatchReview[]
+  orderItems          OrderItem[]
+  payouts             SellerPayout[]
+  refunds             Refund[]
+  notifications       Notification[]
+  coupons             Coupon[]
+  ledgerEntries       FinancialLedgerEntry[]
+  shipments           Shipment[]
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
 }
 
 model Product {
@@ -229,6 +244,10 @@ model CatalogProduct {
   brandId          String?
   model            String?                 @db.VarChar(160)
   barcode          String?                 @unique @db.VarChar(32)
+  normalizedGtin   String?                 @unique @db.VarChar(14)
+  normalizedName   String?                 @db.VarChar(191)
+  normalizedBrand  String?                 @db.VarChar(160)
+  normalizedModel  String?                 @db.VarChar(160)
   variantKey       String?                 @db.VarChar(191)
   identityKey      String?                 @unique @db.VarChar(191)
   description      String
@@ -247,6 +266,7 @@ model CatalogProduct {
   brandRecord      Brand?                  @relation(fields: [brandId], references: [id], onDelete: SetNull)
   legacyProducts   Product[]
   offers           SellerOffer[]
+  matchReviews     CatalogMatchReview[]
   cartItems        CartItem[]
   favorites        Favorite[]
   reviews          Review[]
@@ -258,31 +278,63 @@ model CatalogProduct {
   @@index([categoryId])
   @@index([brandId])
   @@index([brand, model, variantKey])
+  @@index([normalizedBrand, normalizedModel, normalizedName])
 }
 
 model SellerOffer {
-  id               String         @id @default(cuid())
+  id               String              @id @default(cuid())
   sellerId         String
   catalogProductId String
-  legacyProductId  String?        @unique
-  sellerSku        String?        @db.VarChar(80)
-  price            Decimal        @db.Decimal(12, 2)
-  listPrice        Decimal?       @db.Decimal(12, 2)
-  stock            Int            @default(0)
-  active           Boolean        @default(true)
-  handlingTimeDays Int            @default(0)
-  seller           SellerProfile  @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct   CatalogProduct @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
-  legacyProduct    Product?       @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
+  legacyProductId  String?             @unique
+  sellerSku        String?             @db.VarChar(80)
+  price            Decimal             @db.Decimal(12, 2)
+  listPrice        Decimal?            @db.Decimal(12, 2)
+  stock            Int                 @default(0)
+  active           Boolean             @default(true)
+  handlingTimeDays Int                 @default(0)
+  source           String?             @db.VarChar(50)
+  externalSourceId String?             @db.VarChar(191)
+  matchStatus      CatalogMatchStatus?
+  matchReason      String?             @db.VarChar(100)
+  matchConfidence  Decimal?            @db.Decimal(5, 4)
+  seller           SellerProfile       @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct   CatalogProduct      @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  legacyProduct    Product?            @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
   cartItems        CartItem[]
   orderItems       OrderItem[]
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
   @@unique([sellerId, catalogProductId])
   @@unique([sellerId, sellerSku])
+  @@unique([sellerId, source, externalSourceId])
   @@index([catalogProductId, active, stock])
   @@index([sellerId, active, updatedAt])
+}
+
+model CatalogMatchReview {
+  id                        String                   @id @default(cuid())
+  sellerId                  String
+  candidateCatalogProductId String?
+  sellerSku                 String?                  @db.VarChar(80)
+  proposedGtin              String?                  @db.VarChar(14)
+  normalizedName            String?                  @db.VarChar(191)
+  normalizedBrand           String?                  @db.VarChar(160)
+  normalizedModel           String?                  @db.VarChar(160)
+  matchStatus               CatalogMatchStatus
+  reasonCode                String                   @db.VarChar(100)
+  confidence                Decimal?                 @db.Decimal(5, 4)
+  source                    String?                  @db.VarChar(50)
+  externalSourceId          String?                  @db.VarChar(191)
+  status                    CatalogMatchReviewStatus @default(PENDING)
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  seller                    SellerProfile            @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  candidateCatalogProduct   CatalogProduct?          @relation(fields: [candidateCatalogProductId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([sellerId, status, createdAt])
+  @@index([candidateCatalogProductId, status])
 }
 
 model Order {
