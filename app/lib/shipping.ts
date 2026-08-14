@@ -1,4 +1,4 @@
-import type { OrderStatus, ShipmentStatus } from "@prisma/client";
+import type { ShipmentStatus } from "@prisma/client";
 
 export const CARRIERS = [
   { code: "YURTICI", displayName: "Yurtiçi Kargo", trackingUrl: (number: string) => `https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code=${encodeURIComponent(number)}` },
@@ -23,8 +23,9 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, ShipmentStatus[]> = {
   READY_TO_SHIP: ["SHIPPED", "CANCELLED"], SHIPPED: ["DELIVERED"], DELIVERED: [], CANCELLED: [],
 };
 
-const SHIPMENT_ORDER_STATUS: Record<ShipmentStatus, OrderStatus> = {
+type ShipmentOrderStatus = "NEW" | "PREPARING" | "READY_TO_SHIP" | "SHIPPED" | "DELIVERED" | "CANCELLED";
+const SHIPMENT_ORDER_STATUS: Record<ShipmentStatus, ShipmentOrderStatus> = {
   NOT_READY: "NEW", PREPARING: "PREPARING", READY_TO_SHIP: "READY_TO_SHIP", SHIPPED: "SHIPPED",
   DELIVERED: "DELIVERED", CANCELLED: "CANCELLED",
 };
-export const shipmentToOrderStatus = (status: ShipmentStatus): OrderStatus => SHIPMENT_ORDER_STATUS[status];
+export const shipmentToOrderStatus = (status: ShipmentStatus): ShipmentOrderStatus => SHIPMENT_ORDER_STATUS[status];

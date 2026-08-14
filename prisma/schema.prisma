@@ -62,6 +62,8 @@ enum PaymentStatus {
   CANCELLED
   REFUNDED
   PARTIALLY_REFUNDED
+  REFUND_PENDING
+  PARTIAL_REFUND_PENDING
 }
 
 enum PayoutStatus {
@@ -80,6 +82,8 @@ enum LedgerEntryType {
   PAYOUT
   REFUND
   ADJUSTMENT
+  SALE_REVERSAL
+  COMMISSION_REVERSAL
 }
 
 enum RefundStatus {
@@ -174,8 +178,8 @@ model Product {
   sellerId         String
   catalogProductId String?
   seller           SellerProfile           @relation(fields: [sellerId], references: [id], onDelete: Cascade)
-  catalogProduct   CatalogProduct?          @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
-  sellerOffer      SellerOffer?             @relation("LegacyProductOffer")
+  catalogProduct   CatalogProduct?         @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
+  sellerOffer      SellerOffer?            @relation("LegacyProductOffer")
   name             String
   sku              String?                 @db.VarChar(80)
   slug             String                  @unique
@@ -245,8 +249,8 @@ model CatalogProduct {
   offers           SellerOffer[]
   cartItems        CartItem[]
   favorites        Favorite[]
-  reviews           Review[]
-  orderItems        OrderItem[]
+  reviews          Review[]
+  orderItems       OrderItem[]
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
 
@@ -271,7 +275,7 @@ model SellerOffer {
   catalogProduct   CatalogProduct @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
   legacyProduct    Product?       @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
   cartItems        CartItem[]
-  orderItems        OrderItem[]
+  orderItems       OrderItem[]
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -342,8 +346,8 @@ model OrderItem {
   shipmentItems    ShipmentItem[]
   product          Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
   seller           SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct   CatalogProduct?         @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
-  sellerOffer      SellerOffer?            @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
+  catalogProduct   CatalogProduct?        @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
+  sellerOffer      SellerOffer?           @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
 
@@ -429,27 +433,28 @@ model PaymentEvent {
 }
 
 model Refund {
-  id                String                @id @default(cuid())
+  id                String                 @id @default(cuid())
   paymentId         String
   orderId           String
   orderItemId       String
   sellerId          String
   requestedByUserId String?
-  idempotencyKey    String                @unique @db.VarChar(120)
-  providerRefundId  String?               @unique @db.VarChar(191)
-  amount            Decimal               @db.Decimal(12, 2)
-  currency          String                @default("TRY") @db.VarChar(3)
-  reason            String                @db.VarChar(500)
-  status            RefundStatus          @default(REQUESTED)
-  requestedAt       DateTime              @default(now())
+  idempotencyKey    String                 @unique @db.VarChar(120)
+  providerRefundId  String?                @unique @db.VarChar(191)
+  amount            Decimal                @db.Decimal(12, 2)
+  currency          String                 @default("TRY") @db.VarChar(3)
+  reason            String                 @db.VarChar(500)
+  status            RefundStatus           @default(REQUESTED)
+  requestedAt       DateTime               @default(now())
   completedAt       DateTime?
-  updatedAt         DateTime              @updatedAt
-  payment           Payment               @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  order             Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  orderItem         OrderItem             @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
-  seller            SellerProfile         @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  requestedBy       User?                 @relation("RefundRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  updatedAt         DateTime               @updatedAt
+  payment           Payment                @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  order             Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem         OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  seller            SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  requestedBy       User?                  @relation("RefundRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
   audits            FinancialAuditEvent[]
+  ledgerEntries     FinancialLedgerEntry[]
 
   @@index([sellerId, status, requestedAt])
   @@index([orderId, requestedAt])
@@ -532,6 +537,8 @@ model FinancialLedgerEntry {
   sellerId    String
   orderItemId String
   payoutId    String?
+  refundId    String?
+  dedupeKey   String?         @unique @db.VarChar(191)
   type        LedgerEntryType
   amount      Decimal         @db.Decimal(12, 2)
   currency    String          @default("TRY") @db.VarChar(3)
@@ -539,9 +546,11 @@ model FinancialLedgerEntry {
   seller      SellerProfile   @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   orderItem   OrderItem       @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   payout      SellerPayout?   @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  refund      Refund?         @relation(fields: [refundId], references: [id], onDelete: SetNull)
 
   @@index([sellerId, createdAt])
   @@index([orderItemId, type])
+  @@index([refundId, createdAt])
 }
 
 model OrderStatusHistory {
@@ -559,18 +568,18 @@ model OrderStatusHistory {
 }
 
 model CartItem {
-  id        String   @id @default(cuid())
-  userId    String
-  productId String
+  id               String          @id @default(cuid())
+  userId           String
+  productId        String
   catalogProductId String?
-  sellerOfferId String?
-  quantity  Int      @default(1)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  catalogProduct CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: Cascade)
-  sellerOffer SellerOffer? @relation(fields: [sellerOfferId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  sellerOfferId    String?
+  quantity         Int             @default(1)
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product          Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  catalogProduct   CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: Cascade)
+  sellerOffer      SellerOffer?    @relation(fields: [sellerOfferId], references: [id], onDelete: Cascade)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@unique([userId, productId])
   @@index([userId])
@@ -579,73 +588,73 @@ model CartItem {
 }
 
 model Favorite {
-  id        String   @id @default(cuid())
-  userId    String
-  productId String
+  id               String          @id @default(cuid())
+  userId           String
+  productId        String
   catalogProductId String?
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  catalogProduct CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product          Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  catalogProduct   CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: Cascade)
+  createdAt        DateTime        @default(now())
 
   @@unique([userId, productId])
-  @@index([userId])
   @@unique([userId, catalogProductId])
+  @@index([userId])
   @@index([catalogProductId])
 }
 
 model Category {
-  id        String     @id @default(cuid())
-  name      String
-  slug      String     @unique
-  active    Boolean    @default(true)
-  sortOrder Int        @default(0)
-  parentId  String?
-  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
-  children  Category[] @relation("CategoryTree")
-  products  Product[]
+  id              String           @id @default(cuid())
+  name            String
+  slug            String           @unique
+  active          Boolean          @default(true)
+  sortOrder       Int              @default(0)
+  parentId        String?
+  parent          Category?        @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children        Category[]       @relation("CategoryTree")
+  products        Product[]
   catalogProducts CatalogProduct[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([active, sortOrder])
   @@index([parentId])
 }
 
 model Brand {
-  id        String    @id @default(cuid())
-  name      String
-  slug      String    @unique
-  active    Boolean   @default(true)
-  products  Product[]
+  id              String           @id @default(cuid())
+  name            String
+  slug            String           @unique
+  active          Boolean          @default(true)
+  products        Product[]
   catalogProducts CatalogProduct[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([active, name])
 }
 
 model Review {
-  id               String       @id @default(cuid())
+  id               String          @id @default(cuid())
   userId           String
   productId        String
   catalogProductId String?
-  orderItemId      String       @unique
+  orderItemId      String          @unique
   rating           Int
-  comment          String       @db.VarChar(2000)
-  status           ReviewStatus @default(PENDING)
-  moderationReason String?      @db.VarChar(500)
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product          Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  comment          String          @db.VarChar(2000)
+  status           ReviewStatus    @default(PENDING)
+  moderationReason String?         @db.VarChar(500)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product          Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   catalogProduct   CatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: Cascade)
-  orderItem        OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  orderItem        OrderItem       @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
 
   @@unique([userId, productId])
+  @@unique([userId, catalogProductId])
   @@index([productId, status, createdAt])
   @@index([status, createdAt])
-  @@unique([userId, catalogProductId])
   @@index([catalogProductId, status, createdAt])
 }
 

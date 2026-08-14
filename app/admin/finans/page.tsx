@@ -13,7 +13,7 @@ export default async function AdminFinancePage({ searchParams }: { searchParams:
   await requireAdmin(); const params = await searchParams; const value = (key: string) => typeof params[key] === "string" ? params[key] : "";
   const type = ["payments", "refunds", "payouts"].includes(value("type")) ? value("type") : "payments";
   const q = value("q").trim().slice(0, 120); const status = value("status").slice(0, 40); const page = Math.max(1, Math.min(10_000, Number.parseInt(value("page"), 10) || 1));
-  const [paymentPending, refundPending, payoutPending] = await Promise.all([prisma.payment.count({ where: { status: "PENDING" } }), prisma.refund.count({ where: { status: { in: ["REQUESTED", "APPROVED", "PROCESSING"] } } }), prisma.sellerPayout.count({ where: { status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } } })]);
+  const [paymentPending, refundPending, payoutPending] = await Promise.all([prisma.payment.count({ where: { status: { in: ["PENDING", "REFUND_PENDING", "PARTIAL_REFUND_PENDING"] } } }), prisma.refund.count({ where: { status: { in: ["REQUESTED", "APPROVED", "PROCESSING"] } } }), prisma.sellerPayout.count({ where: { status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } } })]);
   let total = 0; let content;
   if (type === "refunds") {
     const valid = ["REQUESTED", "APPROVED", "PROCESSING", "COMPLETED", "REJECTED", "FAILED", "CANCELLED"].includes(status) ? status as RefundStatus : undefined;
@@ -24,7 +24,7 @@ export default async function AdminFinancePage({ searchParams }: { searchParams:
     const where = { ...(valid ? { status: valid } : {}), ...(q ? { OR: [{ order: { orderNumber: { contains: q, mode: "insensitive" as const } } }, { seller: { storeName: { contains: q, mode: "insensitive" as const } } }] } : {}) };
     [total, content] = await Promise.all([prisma.sellerPayout.count({ where }), prisma.sellerPayout.findMany({ where, select: { id: true, grossAmount: true, commissionAmount: true, netAmount: true, currency: true, status: true, createdAt: true, order: { select: { orderNumber: true } }, seller: { select: { storeName: true } }, orderItem: { select: { productName: true } } }, orderBy: { createdAt: "desc" }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE })]);
   } else {
-    const valid = ["PENDING", "AUTHORIZED", "PAID", "FAILED", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"].includes(status) ? status as PaymentStatus : undefined;
+    const valid = ["PENDING", "AUTHORIZED", "PAID", "FAILED", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED", "REFUND_PENDING", "PARTIAL_REFUND_PENDING"].includes(status) ? status as PaymentStatus : undefined;
     const where = { ...(valid ? { status: valid } : {}), ...(q ? { OR: [{ order: { orderNumber: { contains: q, mode: "insensitive" as const } } }, { providerPaymentId: { contains: q, mode: "insensitive" as const } }, { provider: { contains: q, mode: "insensitive" as const } }] } : {}) };
     [total, content] = await Promise.all([prisma.payment.count({ where }), prisma.payment.findMany({ where, select: { id: true, amount: true, currency: true, status: true, provider: true, providerPaymentId: true, createdAt: true, updatedAt: true, order: { select: { orderNumber: true } } }, orderBy: { createdAt: "desc" }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE })]);
   }

@@ -4,7 +4,7 @@ import { getSellerForFulfillment } from "@/app/lib/seller-auth";
 import { prisma } from "@/app/lib/prisma";
 import { ORDER_STATUS_LABELS, SELLER_CANCELLABLE_STATUSES, SHIPPING_COMPANIES } from "@/app/lib/order-status";
 import type { OrderStatus } from "@prisma/client";
-import { enqueueNotifications } from "@/app/lib/notifications";
+import { cancelOrderItem, transitionOrderItem } from "@/app/lib/order-orchestrator";
 
 const mutationSchema = z.object({
   status: z.enum(["PREPARING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "CANCELLED"]),
@@ -26,16 +26,6 @@ const allowed: Record<OrderStatus, OrderStatus[]> = {
   RETURN_REQUESTED: ["RETURNED"],
   RETURNED: [],
 };
-
-function aggregateOrderStatus(statuses: OrderStatus[]): OrderStatus {
-  const active = statuses.filter((status) => status !== "CANCELLED");
-  if (!active.length) return "CANCELLED";
-  if (active.every((status) => status === "DELIVERED" || status === "COMPLETED")) return "DELIVERED";
-  if (active.some((status) => status === "SHIPPED" || status === "DELIVERED" || status === "COMPLETED")) return "SHIPPED";
-  if (active.some((status) => status === "READY_TO_SHIP")) return "READY_TO_SHIP";
-  if (active.some((status) => status === "PREPARING")) return "PREPARING";
-  return "NEW";
-}
 
 export async function GET(_: Request, { params }: RouteContext<"/api/seller/orders/[id]">) {
   const seller = await getSellerForFulfillment();
@@ -68,32 +58,15 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
       if (!allowed[item.status].includes(target)) throw new Error("INVALID_TRANSITION");
       if (target === "CANCELLED" && !SELLER_CANCELLABLE_STATUSES.includes(item.status)) throw new Error("INVALID_TRANSITION");
 
-      const changed = await tx.orderItem.updateMany({
-        where: { id, sellerId: seller.id, status: item.status },
-        data: { status: target, ...(target === "SHIPPED" ? { shippingCompany: parsed.data.shippingCompany, trackingNumber: parsed.data.trackingNumber } : {}) },
-      });
-      if (!changed.count) {
-        const latest = await tx.orderItem.findFirst({ where: { id, sellerId: seller.id }, select: { status: true } });
-        if (latest?.status === target) return { status: target, idempotent: true };
-        throw new Error("CONCURRENT_CHANGE");
-      }
-
-      await tx.orderStatusHistory.create({ data: { orderItemId: id, changedByUserId: seller.userId, fromStatus: item.status, toStatus: target } });
-      await enqueueNotifications(tx, [{ userId: item.order.userId, orderId: item.orderId, type: `ORDER_${target}`, dedupeKey: `order-status:${id}:${target}:customer`, title: "Sipariş durumu güncellendi", message: `${item.order.orderNumber} siparişindeki ${item.productName} ürünü için yeni durum: ${ORDER_STATUS_LABELS[target]}.` }]);
       if (target === "CANCELLED") {
-        if (item.sellerOfferId) {
-          const offer = await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } }, select: { stock: true } });
-          await tx.product.update({ where: { id: item.productId }, data: { stock: offer.stock } });
-        } else {
-          await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
-        }
-        await tx.sellerPayout.updateMany({ where: { orderItemId: id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED" } });
+        return cancelOrderItem(tx, { orderItemId: id, actor: { kind: "SELLER", userId: seller.userId, sellerId: seller.id } });
       }
-      if (target === "DELIVERED" && item.order.payment?.status === "PAID") await tx.sellerPayout.updateMany({ where: { orderItemId: id, status: "PENDING" }, data: { status: "AVAILABLE", availableAt: new Date() } });
-
-      const orderItems = await tx.orderItem.findMany({ where: { orderId: item.orderId }, select: { status: true } });
-      await tx.order.update({ where: { id: item.orderId }, data: { status: aggregateOrderStatus(orderItems.map((orderItem) => orderItem.status)) } });
-      return { status: target, idempotent: false };
+      return transitionOrderItem(tx, {
+        orderItemId: id, sellerId: seller.id, actorUserId: seller.userId,
+        target, allowedFrom: [item.status], shippingCompany: parsed.data.shippingCompany,
+        trackingNumber: parsed.data.trackingNumber,
+        notification: { userId: item.order.userId, orderId: item.orderId, type: `ORDER_${target}`, dedupeKey: `order-status:${id}:${target}:customer`, title: "Sipariş durumu güncellendi", message: `${item.order.orderNumber} siparişindeki ${item.productName} ürünü için yeni durum: ${ORDER_STATUS_LABELS[target]}.` },
+      });
     });
 
     return result ? NextResponse.json({ ok: true, ...result }) : NextResponse.json({ error: "Sipariş kalemi bulunamadı." }, { status: 404 });

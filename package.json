@@ -12,10 +12,13 @@
     "test:checkout-api": "tsx scripts/verify-checkout-api.ts",
     "test:finance-invariants": "tsx scripts/verify-finance-invariants.ts",
     "test:shipping": "tsx scripts/verify-shipping.ts",
-    "test:shipping-runtime": "tsx scripts/verify-shipping-runtime.ts"
-    ,"catalog:backfill": "tsx scripts/backfill-catalog-offers.ts"
-    ,"test:catalog-offers": "tsx scripts/verify-catalog-offers.ts"
-    ,"test:buybox": "node --experimental-strip-types scripts/verify-buybox.ts"
+    "test:shipping-runtime": "tsx scripts/verify-shipping-runtime.ts",
+    "catalog:backfill": "tsx scripts/backfill-catalog-offers.ts",
+    "test:catalog-offers": "tsx scripts/verify-catalog-offers.ts",
+    "test:buybox": "node --experimental-strip-types scripts/verify-buybox.ts",
+    "test:transaction-guardian": "node --experimental-strip-types scripts/verify-transaction-guardian.ts",
+    "test:transaction-guardian-db-connection": "node --env-file=.env --conditions=react-server --import tsx scripts/verify-transaction-guardian-db-connection.ts",
+    "test:transaction-guardian-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-transaction-guardian-db-e2e.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
@@ -27,6 +30,7 @@
     "prisma": "^7.9.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

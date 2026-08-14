@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/prisma";
 import { enqueueNotifications } from "@/app/lib/notifications";
+import { synchronizePaymentRefundStatus } from "@/app/lib/order-orchestrator";
 
 const schema = z.object({ decision: z.enum(["APPROVE", "REJECT"]) }).strict();
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -27,6 +28,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const statuses = await tx.orderItem.findMany({ where: { orderId: refund.orderId }, select: { status: true } });
         if (statuses.every((entry) => entry.status === "DELIVERED" || entry.status === "COMPLETED")) await tx.order.update({ where: { id: refund.orderId }, data: { status: "DELIVERED" } });
       }
+      await synchronizePaymentRefundStatus(tx, refund.paymentId);
       await tx.financialAuditEvent.create({ data: { paymentId: refund.paymentId, refundId: refund.id, orderId: refund.orderId, actorUserId: session.user.id, entityType: "REFUND", entityId: refund.id, eventType: `REFUND_${target}`, fromStatus: refund.status, toStatus: target, source: "ADMIN" } });
       await enqueueNotifications(tx, [{ userId: refund.requestedByUserId ?? undefined, orderId: refund.orderId, type: `REFUND_${target}`, dedupeKey: `refund:${refund.id}:${target}:customer`, title: target === "APPROVED" ? "İade talebi onaylandı" : "İade talebi sonuçlandı", message: `${refund.order.orderNumber} numaralı siparişinizin iade talebi ${target === "APPROVED" ? "onaylandı; finansal iade henüz tamamlanmadı" : "reddedildi"}.` }, { sellerId: refund.sellerId, orderId: refund.orderId, type: `REFUND_${target}`, dedupeKey: `refund:${refund.id}:${target}:seller`, title: "İade talebi güncellendi", message: `${refund.order.orderNumber} siparişindeki iade talebi güncellendi.` }]);
       return { status: target, idempotent: false };
