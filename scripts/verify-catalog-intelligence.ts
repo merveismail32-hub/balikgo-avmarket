@@ -11,9 +11,22 @@ assert.equal(normalizeCatalogText("  SHİMANO—  Vanford  "), "shimano vanford"
 
 const gtin = parseGtin("4006381333931");
 const candidate = (id: string, overrides: Partial<CatalogCandidate> = {}): CatalogCandidate => ({ id, normalizedGtin: null, normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", ...overrides });
+const skuOffer = (catalogProductId: string, normalizedGtin: string | null, barcode: string | null = null) => ({ id: "o1", catalogProductId, sellerSku: "A", catalogProduct: { normalizedGtin, barcode } });
 assert.equal(decideCatalogMatch({ gtin, sellerSku: null, normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [candidate("cat1", { normalizedGtin: "4006381333931" })] }).type, "EXACT_GTIN_MATCH");
-assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: { id: "o1", catalogProductId: "cat1", sellerSku: "A" } }).type, "SELLER_SKU_MATCH");
-assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [candidate("cat2", { normalizedGtin: "4006381333931" })], sellerSkuOffer: { id: "o1", catalogProductId: "cat1", sellerSku: "A" } }).reason, "SKU_GTIN_CONFLICT");
+assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [candidate("cat1", { normalizedGtin: "4006381333931" })], sellerSkuOffer: skuOffer("cat1", "4006381333931") }).type, "SELLER_SKU_MATCH");
+const unknownDifferentGtin = decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", "036000291452") });
+assert.equal(unknownDifferentGtin.reason, "SKU_GTIN_CONFLICT");
+assert.equal(unknownDifferentGtin.catalogProductId, null);
+assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [candidate("cat2", { normalizedGtin: "4006381333931" })], sellerSkuOffer: skuOffer("cat1", "036000291452") }).reason, "SKU_GTIN_CONFLICT");
+assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", null, "4006381333931") }).type, "SELLER_SKU_MATCH");
+assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", null, "036000291452") }).reason, "SKU_GTIN_CONFLICT");
+const unverified = decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", null, "legacy") });
+assert.equal(unverified.type, "REVIEW_REQUIRED");
+assert.equal(unverified.reason, "SKU_GTIN_IDENTITY_UNVERIFIED");
+assert.equal(unverified.catalogProductId, null);
+assert.equal(decideCatalogMatch({ gtin, sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", null) }).reason, "SKU_GTIN_IDENTITY_UNVERIFIED");
+assert.equal(decideCatalogMatch({ gtin: parseGtin(null), sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", "036000291452") }).type, "SELLER_SKU_MATCH");
+assert.equal(decideCatalogMatch({ gtin: parseGtin(" 4006-3813 33931 "), sellerSku: "A", normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [], sellerSkuOffer: skuOffer("cat1", "4006381333931") }).type, "SELLER_SKU_MATCH");
 assert.equal(decideCatalogMatch({ gtin, sellerSku: null, normalizedName: "olta", normalizedBrand: "daiwa", normalizedModel: "x1", candidates: [candidate("cat1", { normalizedGtin: "4006381333931" })] }).reason, "GTIN_BRAND_CONFLICT");
 assert.equal(decideCatalogMatch({ gtin, sellerSku: null, normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x2", candidates: [candidate("cat1", { normalizedGtin: "4006381333931" })] }).reason, "GTIN_MODEL_CONFLICT");
 const empty = parseGtin(null);
@@ -22,4 +35,4 @@ assert.equal(decideCatalogMatch({ gtin: empty, sellerSku: null, normalizedName: 
 const multiple = decideCatalogMatch({ gtin: empty, sellerSku: null, normalizedName: "olta", normalizedBrand: "shimano", normalizedModel: "x1", candidates: [candidate("z"), candidate("a")] });
 assert.deepEqual(multiple.candidateIds, ["a", "z"]);
 assert.equal(decideCatalogMatch({ gtin: parseGtin("123"), sellerSku: null, normalizedName: "x", normalizedBrand: null, normalizedModel: null, candidates: [] }).reason, "INVALID_GTIN");
-console.log("PASS: catalog normalization and deterministic matching (18 assertions).");
+console.log("PASS: catalog normalization and deterministic matching, including seller-SKU GTIN identity safeguards.");

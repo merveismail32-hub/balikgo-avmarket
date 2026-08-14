@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     const slug = attempt === 0 ? baseSlug : `${baseSlug}-${crypto.randomUUID().slice(0, 8)}`;
     try {
       const [sellerSkuOffer, candidates] = await Promise.all([
-        sellerSku ? prisma.sellerOffer.findUnique({ where: { sellerId_sellerSku: { sellerId: seller.id, sellerSku } }, select: { id: true, catalogProductId: true, sellerSku: true, legacyProductId: true } }) : null,
+        sellerSku ? prisma.sellerOffer.findUnique({ where: { sellerId_sellerSku: { sellerId: seller.id, sellerSku } }, select: { id: true, catalogProductId: true, sellerSku: true, legacyProductId: true, catalogProduct: { select: { normalizedGtin: true, barcode: true } } } }) : null,
         gtin.valid
           ? prisma.catalogProduct.findMany({ where: { normalizedGtin: gtin.normalized }, select: { id: true, normalizedGtin: true, normalizedName: true, normalizedBrand: true, normalizedModel: true } })
           : prisma.catalogProduct.findMany({ where: { normalizedName, normalizedBrand, normalizedModel }, orderBy: { id: "asc" }, take: 10, select: { id: true, normalizedGtin: true, normalizedName: true, normalizedBrand: true, normalizedModel: true } }),
