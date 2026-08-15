@@ -30,7 +30,9 @@
     "test:stock-truth": "node --experimental-strip-types scripts/verify-stock-truth.ts",
     "test:stock-truth-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-truth-db-e2e.ts",
     "test:stock-reservation": "node --experimental-strip-types scripts/verify-stock-reservation.ts",
-    "test:stock-reservation-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-reservation-db-e2e.ts"
+    "test:stock-reservation-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-reservation-db-e2e.ts",
+    "test:payment-expiry": "node --conditions=react-server --import tsx scripts/verify-payment-expiry.ts",
+    "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

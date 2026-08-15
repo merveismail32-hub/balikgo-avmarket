@@ -73,11 +73,30 @@ enum PaymentStatus {
   AUTHORIZED
   PAID
   FAILED
+  EXPIRED
   CANCELLED
   REFUNDED
   PARTIALLY_REFUNDED
   REFUND_PENDING
   PARTIAL_REFUND_PENDING
+}
+
+enum PaymentReconciliationReviewStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+}
+
+enum PaymentReconciliationReason {
+  LATE_PAYMENT_SUCCESS
+  EXPIRY_FULFILLMENT_CONFLICT
+  EXPIRY_RELEASE_FAILED
+  PAYMENT_STOCK_STATE_MISMATCH
+}
+
+enum PaymentReconciliationPriority {
+  HIGH
+  CRITICAL
 }
 
 enum PayoutStatus {
@@ -175,6 +194,7 @@ model User {
   reviews            Review[]
   couponRedemptions  CouponRedemption[]
   adminAudits        AdminAuditLog[]
+  paymentReconciliationReviewsResolved PaymentReconciliationReview[] @relation("PaymentReconciliationResolver")
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
 }
@@ -523,19 +543,25 @@ model Payment {
   metadata          Json?
   paidAt            DateTime?
   failedAt          DateTime?
+  expiredAt         DateTime?
   reservationExpiresAt DateTime?
   stockReleasedAt   DateTime?
   stockReleaseReason StockReleaseReason?
+  expiryClaimToken String?                @unique @db.VarChar(64)
+  expiryClaimedAt DateTime?
+  expiryClaimExpiresAt DateTime?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   order             Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
   events            PaymentEvent[]
   refunds           Refund[]
   audits            FinancialAuditEvent[]
+  reconciliationReviews PaymentReconciliationReview[]
 
   @@index([status, createdAt])
   @@index([provider, createdAt])
   @@index([status, reservationExpiresAt])
+  @@index([status, reservationExpiresAt, expiryClaimExpiresAt])
 }
 
 model PaymentEvent {
@@ -547,9 +573,35 @@ model PaymentEvent {
   payloadHash     String?  @db.VarChar(128)
   processedAt     DateTime @default(now())
   payment         Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  reconciliationReviews PaymentReconciliationReview[]
 
   @@unique([provider, providerEventId])
   @@index([paymentId, processedAt])
+}
+
+model PaymentReconciliationReview {
+  id             String                              @id @default(cuid())
+  paymentId      String
+  paymentEventId String?
+  reason         PaymentReconciliationReason
+  terminalStatus PaymentStatus
+  status         PaymentReconciliationReviewStatus   @default(PENDING)
+  priority       PaymentReconciliationPriority       @default(HIGH)
+  fingerprint    String                              @db.Char(64)
+  openFingerprint String?                            @unique @db.Char(64)
+  metadata       Json?
+  createdAt      DateTime                            @default(now())
+  updatedAt      DateTime                            @updatedAt
+  resolvedAt     DateTime?
+  resolvedByUserId String?
+  payment        Payment                             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  paymentEvent   PaymentEvent?                       @relation(fields: [paymentEventId], references: [id], onDelete: SetNull)
+  resolvedBy     User?                               @relation("PaymentReconciliationResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([paymentId, status, createdAt])
+  @@index([status, priority, createdAt])
+  @@index([paymentEventId])
+  @@index([resolvedByUserId])
 }
 
 model Refund {

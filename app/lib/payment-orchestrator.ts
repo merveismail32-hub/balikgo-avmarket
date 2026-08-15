@@ -5,6 +5,7 @@ import type { VerifiedPaymentEvent } from "./payments";
 import { enqueueNotifications } from "./notifications";
 import { ensurePaidCancellationIntegrity, reconcileOrderPayouts } from "./order-orchestrator";
 import { consumeOrderReservationsForPayment, releaseOrderReservation } from "./stock-reservation";
+import { createOrGetPaymentReconciliationReview, enqueuePaymentReconciliationAlerts } from "./payment-reconciliation";
 
 export function isDuplicatePaymentEventConflict(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError
@@ -20,12 +21,12 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
   if (!payment.amount.equals(new Prisma.Decimal(input.event.amount)) || payment.currency !== input.event.currency) throw new Error("AMOUNT_MISMATCH");
   if (payment.provider !== input.provider && !(input.provider === "TEST" && payment.provider === "TEST_PENDING")) throw new Error("PAYMENT_MISMATCH");
   if (payment.providerPaymentId && input.event.providerPaymentId && payment.providerPaymentId !== input.event.providerPaymentId) throw new Error("PAYMENT_MISMATCH");
-  await tx.paymentEvent.create({ data: { paymentId: payment.id, provider: input.provider, providerEventId: input.event.eventId, eventType: input.event.eventType, payloadHash: input.payloadHash } });
+  const paymentEvent = await tx.paymentEvent.create({ data: { paymentId: payment.id, provider: input.provider, providerEventId: input.event.eventId, eventType: input.event.eventType, payloadHash: input.payloadHash } });
   const target = input.event.eventType === "PAYMENT_PAID" ? "PAID" : "FAILED";
   const releasedBeforePaid = target === "PAID" && payment.order.items.some((item) => item.stockReservationState === "RELEASED");
   const changed = releasedBeforePaid ? { count: 0 } : await tx.payment.updateMany({ where: { id: payment.id, status: { in: ["PENDING", "AUTHORIZED"] } }, data: { status: target, providerPaymentId: input.event.providerPaymentId, ...(target === "PAID" ? { paidAt: new Date() } : { failedAt: new Date() }) } });
   const current = changed.count ? target : (await tx.payment.findUniqueOrThrow({ where: { id: payment.id }, select: { status: true } })).status;
-  const latePaid = !changed.count && target === "PAID" && (current === "FAILED" || releasedBeforePaid);
+  const latePaid = !changed.count && target === "PAID" && (["FAILED", "EXPIRED"].includes(current) || releasedBeforePaid);
   await tx.financialAuditEvent.create({ data: { paymentId: payment.id, orderId: payment.orderId, entityType: "PAYMENT", entityId: payment.id, eventType: latePaid ? "LATE_PAYMENT_REVIEW_REQUIRED" : input.event.eventType, fromStatus: payment.status, toStatus: current, source: `WEBHOOK_${input.provider}`, externalEventId: input.event.eventId } });
   if (changed.count && target === "PAID") {
     await consumeOrderReservationsForPayment(tx, payment.id);
@@ -39,6 +40,10 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
     await tx.payment.update({ where: { id: payment.id }, data: { stockReleasedAt: new Date(), stockReleaseReason: "PAYMENT_FAILED" } });
     await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId: payment.orderId, type: "PAYMENT_FAILED", dedupeKey: `payment-failed:${payment.id}:customer`, title: "Ödeme tamamlanamadı", message: `${payment.order.orderNumber} numaralı siparişiniz ödeme tamamlanamadığı için iptal edildi.` }]);
   }
-  if (latePaid) await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId: payment.orderId, type: "LATE_PAYMENT_REVIEW_REQUIRED", dedupeKey: `late-payment-review:${payment.id}:customer`, title: "Ödemeniz inceleniyor", message: `${payment.order.orderNumber} numaralı siparişiniz için geç ulaşan ödeme operasyon incelemesine alındı.` }]);
+  if (latePaid) {
+    const review = await createOrGetPaymentReconciliationReview(tx, { paymentId: payment.id, paymentEventId: paymentEvent.id, reason: "LATE_PAYMENT_SUCCESS", terminalStatus: current, priority: "CRITICAL", metadata: { signal: "REFUND_REQUIRED", slaHours: 2 } });
+    await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId: payment.orderId, type: "LATE_PAYMENT_REVIEW_REQUIRED", dedupeKey: `late-payment-review:${review.review.id}:customer`, title: "Ödemeniz inceleniyor", message: `${payment.order.orderNumber} numaralı siparişiniz için geç ulaşan ödeme operasyon incelemesine alındı.` }]);
+    await enqueuePaymentReconciliationAlerts(tx, { reviewId: review.review.id, orderId: payment.orderId, type: "CEO_LATE_PAYMENT_REVIEW", title: "Kritik ödeme incelemesi", message: "Geç ulaşan ödeme için iki saatlik operasyon incelemesi gereklidir." });
+  }
   return { duplicate: false, latePaymentReviewRequired: latePaid };
 }
