@@ -3,9 +3,14 @@ import "server-only";
 import { Prisma, type OrderStatus } from "@prisma/client";
 import { enqueueNotifications, type NotificationDraft } from "./notifications";
 import { aggregateOrderStatus, cancellationLedgerReversals, pendingRefundPaymentStatus } from "./order-invariants";
-import { restoreCancellation } from "./stock-truth";
+import { releaseOrderItemReservation } from "./stock-reservation";
 
 type CancellationActor = { kind: "CUSTOMER"; userId: string } | { kind: "SELLER"; userId: string; sellerId: string };
+
+export async function assertPaymentPaidForFulfillment(tx: Prisma.TransactionClient, orderId: string) {
+  const payment = await tx.payment.findUnique({ where: { orderId }, select: { status: true } });
+  if (payment?.status !== "PAID") throw new Error("PAYMENT_NOT_PAID");
+}
 
 async function refreshAggregateOrderStatus(tx: Prisma.TransactionClient, orderId: string) {
   const items = await tx.orderItem.findMany({ where: { orderId }, select: { status: true } });
@@ -57,7 +62,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   const ownership = input.actor.kind === "CUSTOMER" ? { order: { userId: input.actor.userId } } : { sellerId: input.actor.sellerId };
   const item = await tx.orderItem.findFirst({
     where: { id: input.orderItemId, ...ownership },
-    select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, commissionAmount: true, status: true, payout: { select: { id: true } }, order: { select: { userId: true, orderNumber: true, payment: { select: { id: true, amount: true, status: true } } } } },
+    select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, commissionAmount: true, status: true, stockReservationState: true, payout: { select: { id: true } }, order: { select: { userId: true, orderNumber: true, payment: { select: { id: true, amount: true, status: true } } } } },
   });
   if (!item) return null;
   if (item.status === "CANCELLED") return { status: "CANCELLED" as const, idempotent: true };
@@ -69,9 +74,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
     throw new Error("CONCURRENT_CHANGE");
   }
 
-  if (item.sellerOfferId) {
-    await restoreCancellation(tx, { sellerOfferId: item.sellerOfferId, productId: item.productId, quantity: item.quantity, orderId: item.orderId, orderItemId: item.id, actorUserId: input.actor.userId, actorSellerId: input.actor.kind === "SELLER" ? input.actor.sellerId : undefined, idempotencyKey: `stock:v1:cancellation:${item.id}`, source: input.actor.kind });
-  } else await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
+  await releaseOrderItemReservation(tx, { orderItemId: item.id, reason: input.actor.kind === "CUSTOMER" ? "CUSTOMER_CANCELLATION" : "SELLER_CANCELLATION", allowConsumed: item.stockReservationState === "CONSUMED", actorUserId: input.actor.userId, actorSellerId: input.actor.kind === "SELLER" ? input.actor.sellerId : undefined });
   await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED", availableAt: null } });
 
   let refundId: string | null = null;
@@ -82,6 +85,9 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
     refundId = refund.id;
     await tx.financialLedgerEntry.createMany({ data: cancellationLedgerReversals({ sellerId: item.sellerId, orderItemId: item.id, payoutId: item.payout?.id, refundId: refund.id, grossAmount: amount, commissionAmount: item.commissionAmount ?? new Prisma.Decimal(0) }), skipDuplicates: true });
     await synchronizePaymentRefundStatus(tx, payment.id);
+  } else if (item.stockReservationState) {
+    const amount = item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2);
+    await tx.financialLedgerEntry.createMany({ data: cancellationLedgerReversals({ sellerId: item.sellerId, orderItemId: item.id, payoutId: item.payout?.id, grossAmount: amount, commissionAmount: item.commissionAmount ?? new Prisma.Decimal(0), dedupePrefix: "reservation-release" }), skipDuplicates: true });
   }
 
   await tx.orderStatusHistory.create({ data: { orderItemId: item.id, changedByUserId: input.actor.userId, fromStatus: item.status, toStatus: "CANCELLED" } });
@@ -97,6 +103,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
 export async function transitionOrderItem(tx: Prisma.TransactionClient, input: { orderItemId: string; sellerId: string; actorUserId: string; target: Exclude<OrderStatus, "CANCELLED" | "RETURN_REQUESTED" | "RETURNED">; allowedFrom: OrderStatus[]; shippingCompany?: string; trackingNumber?: string; notification?: NotificationDraft }) {
   const item = await tx.orderItem.findFirst({ where: { id: input.orderItemId, sellerId: input.sellerId }, select: { id: true, orderId: true, status: true } });
   if (!item) return null;
+  await assertPaymentPaidForFulfillment(tx, item.orderId);
   if (item.status === input.target) return { status: input.target, idempotent: true };
   if (!input.allowedFrom.includes(item.status)) throw new Error("INVALID_TRANSITION");
   const changed = await tx.orderItem.updateMany({ where: { id: item.id, sellerId: input.sellerId, status: item.status }, data: { status: input.target, ...(input.target === "SHIPPED" ? { shippingCompany: input.shippingCompany, trackingNumber: input.trackingNumber } : {}) } });

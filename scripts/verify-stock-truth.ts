@@ -9,7 +9,8 @@ assert.match(orders, /stock:v1:checkout:\$\{clientRequestId\}:\$\{product\.selle
 assert.match(orders, /decrementForCheckout\(tx,/);
 assert.match(orders, /actorSellerId: product\.sellerId/);
 assert.match(orders, /error\.code === "INSUFFICIENT_STOCK"/);
-assert.match(cancellation, /stock:v1:cancellation:\$\{item\.id\}/);
+assert.match(cancellation, /releaseOrderItemReservation/);
+assert.match(readFileSync(new URL("../app/lib/stock-reservation.ts", import.meta.url), "utf8"), /stock:v2:reservation-release:\$\{orderItemId\}/);
 assert.match(inventory + productPatch, /expectedInventoryVersion/);
 assert.match(service, /pg_advisory_xact_lock/);
 assert.match(service, /IDEMPOTENCY_CONFLICT/);

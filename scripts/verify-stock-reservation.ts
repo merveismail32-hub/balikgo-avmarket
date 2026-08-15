@@ -1,0 +1,32 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+const schema = read("../prisma/schema.prisma");
+const migration = read("../prisma/migrations/20260815190000_stock_reservation_phase_2_package_1/migration.sql");
+const checkout = read("../app/api/orders/route.ts");
+const reservation = read("../app/lib/stock-reservation.ts");
+const payment = read("../app/lib/payment-orchestrator.ts");
+const cancellation = read("../app/lib/order-orchestrator.ts");
+const sellerOrder = read("../app/api/seller/orders/[id]/route.ts");
+const shipmentCreate = read("../app/api/seller/shipments/route.ts");
+const shipment = read("../app/lib/shipment-orchestrator.ts");
+
+assert.match(schema, /stockReservationState\s+StockReservationState\?/);
+assert.match(schema, /reservationExpiresAt\s+DateTime\?/);
+assert(!/\b(?:UPDATE|DELETE|DROP|TRUNCATE)\b/i.test(migration));
+assert.match(checkout, /Date\.now\(\) \+ 15 \* 60_000/);
+assert.match(checkout, /stockReservationState: "RESERVED"/);
+assert.match(reservation, /stock:v2:reservation-release:\$\{orderItemId\}/);
+assert.match(reservation, /stockReservationState: "CONSUMED"/);
+assert.match(reservation, /stockReservationState: "RELEASED"/);
+assert.match(reservation, /stockReservationVersion: \{ increment: 1 \}/);
+assert.match(payment, /consumeOrderReservationsForPayment/);
+assert.match(payment, /releaseOrderReservation/);
+assert.match(payment, /LATE_PAYMENT_REVIEW_REQUIRED/);
+assert.match(cancellation, /releaseOrderItemReservation/);
+assert(!/restoreCancellation/.test(cancellation));
+for (const source of [sellerOrder, shipmentCreate, shipment]) assert.match(source, /assertPaymentPaidForFulfillment/);
+assert.match(reservation, /dedupePrefix: "reservation-release"/);
+assert.match(reservation, /couponRedemption\.deleteMany/);
+console.log("PASS: Phase 2 reservation lifecycle, canonical release, compensation and fulfillment gates verified.");

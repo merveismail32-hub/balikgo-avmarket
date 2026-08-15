@@ -4,7 +4,7 @@ import { getSellerForFulfillment } from "@/app/lib/seller-auth";
 import { prisma } from "@/app/lib/prisma";
 import { ORDER_STATUS_LABELS, SELLER_CANCELLABLE_STATUSES, SHIPPING_COMPANIES } from "@/app/lib/order-status";
 import type { OrderStatus } from "@prisma/client";
-import { cancelOrderItem, transitionOrderItem } from "@/app/lib/order-orchestrator";
+import { assertPaymentPaidForFulfillment, cancelOrderItem, transitionOrderItem } from "@/app/lib/order-orchestrator";
 
 const mutationSchema = z.object({
   status: z.enum(["PREPARING", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "CANCELLED"]),
@@ -50,6 +50,7 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
       const item = await tx.orderItem.findFirst({ where: { id, sellerId: seller.id }, select: { orderId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, status: true, order: { select: { userId: true, orderNumber: true, payment: { select: { status: true } } } } } });
       if (!item) return null;
       const target = parsed.data.status;
+      if (target !== "CANCELLED") await assertPaymentPaidForFulfillment(tx, item.orderId);
 
       if (target === item.status) {
         if (target === "SHIPPED") await tx.orderItem.updateMany({ where: { id, sellerId: seller.id, status: "SHIPPED" }, data: { shippingCompany: parsed.data.shippingCompany, trackingNumber: parsed.data.trackingNumber } });
@@ -72,7 +73,7 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
     return result ? NextResponse.json({ ok: true, ...result }) : NextResponse.json({ error: "Sipariş kalemi bulunamadı." }, { status: 404 });
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : "";
-    if (message === "INVALID_TRANSITION" || message === "CONCURRENT_CHANGE") return NextResponse.json({ error: "Sipariş durumu bu işlem için uygun değil." }, { status: 409 });
+    if (["INVALID_TRANSITION", "CONCURRENT_CHANGE", "PAYMENT_NOT_PAID"].includes(message)) return NextResponse.json({ error: "Sipariş durumu veya ödeme bu işlem için uygun değil." }, { status: 409 });
     console.error("[seller-orders] Sipariş güncellenemedi", { orderItemId: id, sellerId: seller.id, code: (reason as { code?: string }).code });
     return NextResponse.json({ error: "Sipariş güncellenemedi. Lütfen tekrar deneyin." }, { status: 500 });
   }

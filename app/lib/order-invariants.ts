@@ -20,9 +20,10 @@ export function isPayoutEligible(input: { paymentStatus: PaymentStatus; itemStat
   return input.paymentStatus === "PAID" && (input.itemStatus === "DELIVERED" || input.itemStatus === "COMPLETED") && !input.hasOpenRefund;
 }
 
-export function cancellationLedgerReversals(input: { sellerId: string; orderItemId: string; payoutId?: string | null; refundId: string; grossAmount: Prisma.Decimal; commissionAmount: Prisma.Decimal }) {
+export function cancellationLedgerReversals(input: { sellerId: string; orderItemId: string; payoutId?: string | null; refundId?: string | null; grossAmount: Prisma.Decimal; commissionAmount: Prisma.Decimal; dedupePrefix?: string }) {
+  const prefix = input.dedupePrefix ?? "cancel";
   return [
-    { sellerId: input.sellerId, orderItemId: input.orderItemId, payoutId: input.payoutId ?? null, refundId: input.refundId, dedupeKey: `cancel:${input.orderItemId}:sale-reversal`, type: "SALE_REVERSAL" as const, amount: input.grossAmount.negated() },
-    { sellerId: input.sellerId, orderItemId: input.orderItemId, payoutId: input.payoutId ?? null, refundId: input.refundId, dedupeKey: `cancel:${input.orderItemId}:commission-reversal`, type: "COMMISSION_REVERSAL" as const, amount: input.commissionAmount.negated() },
+    { sellerId: input.sellerId, orderItemId: input.orderItemId, payoutId: input.payoutId ?? null, refundId: input.refundId ?? null, dedupeKey: `${prefix}:${input.orderItemId}:sale-reversal`, type: "SALE_REVERSAL" as const, amount: input.grossAmount.negated() },
+    { sellerId: input.sellerId, orderItemId: input.orderItemId, payoutId: input.payoutId ?? null, refundId: input.refundId ?? null, dedupeKey: `${prefix}:${input.orderItemId}:commission-reversal`, type: "COMMISSION_REVERSAL" as const, amount: input.commissionAmount.negated() },
   ];
 }

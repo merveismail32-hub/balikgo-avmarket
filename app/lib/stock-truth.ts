@@ -41,6 +41,14 @@ export async function restoreCancellation(tx: Prisma.TransactionClient, input: B
   return finish(tx, input, "CANCELLATION_RESTORE", rows[0].stock - input.quantity, rows[0].stock, rows[0].inventoryVersion - 1);
 }
 
+export async function releaseReservationStock(tx: Prisma.TransactionClient, input: Base & { quantity: number }) {
+  if (!Number.isInteger(input.quantity) || input.quantity <= 0) throw new StockTruthError("INVALID_QUANTITY");
+  const prior = await replay(tx, input, "RESERVATION_RELEASE", input.quantity); if (prior) return prior;
+  const rows = await tx.$queryRaw<Array<{ stock: number; inventoryVersion: number }>>`UPDATE "SellerOffer" SET stock=stock+${input.quantity}, "inventoryVersion"="inventoryVersion"+1, "updatedAt"=NOW() WHERE id=${input.sellerOfferId} RETURNING stock, "inventoryVersion"`;
+  if (!rows[0]) throw new StockTruthError("OFFER_NOT_FOUND");
+  return finish(tx, input, "RESERVATION_RELEASE", rows[0].stock - input.quantity, rows[0].stock, rows[0].inventoryVersion - 1);
+}
+
 export async function setSellerAbsoluteStock(tx: Prisma.TransactionClient, input: Base & { sellerId: string; expectedVersion: number; quantity: number }) {
   if (!Number.isInteger(input.quantity) || input.quantity < 0 || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) throw new StockTruthError("INVALID_QUANTITY");
   await lockKey(tx, input.idempotencyKey);

@@ -4,7 +4,7 @@ import type { ShipmentStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { SHIPMENT_STATUS_LABELS, SHIPMENT_TRANSITIONS, carrierByCode, shipmentToOrderStatus } from "./shipping";
 import { enqueueNotifications } from "./notifications";
-import { cancelOrderItem, transitionOrderItem } from "./order-orchestrator";
+import { assertPaymentPaidForFulfillment, cancelOrderItem, transitionOrderItem } from "./order-orchestrator";
 
 export type ShipmentTransitionInput = {
   shipmentId: string;
@@ -20,6 +20,7 @@ export async function transitionSellerShipment(input: ShipmentTransitionInput) {
     const shipment = await tx.shipment.findFirst({ where: { id: input.shipmentId, sellerId: input.sellerId }, select: { status: true, orderId: true, order: { select: { userId: true, orderNumber: true } }, items: { select: { orderItemId: true, orderItem: { select: { status: true } } } } } });
     if (!shipment) return null;
     const target = input.status;
+    if (target !== "CANCELLED") await assertPaymentPaidForFulfillment(tx, shipment.orderId);
     if (target === shipment.status) return { status: target, idempotent: true };
     if (!SHIPMENT_TRANSITIONS[shipment.status].includes(target)) throw new Error("INVALID_TRANSITION");
     const carrier = input.carrierCode ? carrierByCode(input.carrierCode) : undefined;

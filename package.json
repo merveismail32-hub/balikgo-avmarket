@@ -28,7 +28,9 @@
     "test:transaction-guardian-db-connection": "node --env-file=.env --conditions=react-server --import tsx scripts/verify-transaction-guardian-db-connection.ts",
     "test:transaction-guardian-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-transaction-guardian-db-e2e.ts",
     "test:stock-truth": "node --experimental-strip-types scripts/verify-stock-truth.ts",
-    "test:stock-truth-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-truth-db-e2e.ts"
+    "test:stock-truth-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-truth-db-e2e.ts",
+    "test:stock-reservation": "node --experimental-strip-types scripts/verify-stock-reservation.ts",
+    "test:stock-reservation-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-reservation-db-e2e.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

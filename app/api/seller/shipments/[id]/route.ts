@@ -19,5 +19,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       carrierCode: parsed.data.carrierCode, trackingNumber: parsed.data.trackingNumber,
     });
     return result ? NextResponse.json({ ok: true, ...result }) : NextResponse.json({ error: "Paket bulunamadı." }, { status: 404 });
-  } catch (error) { const message = error instanceof Error ? error.message : ""; if (["INVALID_TRANSITION", "CONCURRENT_CHANGE"].includes(message)) return NextResponse.json({ error: "Paket durumu bu işlem için uygun değil." }, { status: 409 }); console.error("[seller-shipment] update failed", { shipmentId: id, sellerId: seller.id, code: (error as { code?: string }).code }); return NextResponse.json({ error: "Paket güncellenemedi." }, { status: 500 }); }
+  } catch (error) { const message = error instanceof Error ? error.message : ""; if (["INVALID_TRANSITION", "CONCURRENT_CHANGE", "PAYMENT_NOT_PAID"].includes(message)) return NextResponse.json({ error: "Paket durumu veya ödeme bu işlem için uygun değil." }, { status: 409 }); console.error("[seller-shipment] update failed", { shipmentId: id, sellerId: seller.id, code: (error as { code?: string }).code }); return NextResponse.json({ error: "Paket güncellenemedi." }, { status: 500 }); }
 }
