@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma, type OrderStatus } from "@prisma/client";
 import { enqueueNotifications, type NotificationDraft } from "./notifications";
 import { aggregateOrderStatus, cancellationLedgerReversals, pendingRefundPaymentStatus } from "./order-invariants";
+import { restoreCancellation } from "./stock-truth";
 
 type CancellationActor = { kind: "CUSTOMER"; userId: string } | { kind: "SELLER"; userId: string; sellerId: string };
 
@@ -62,11 +63,14 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   if (item.status === "CANCELLED") return { status: "CANCELLED" as const, idempotent: true };
   if (item.status !== "NEW" && item.status !== "PREPARING") throw new Error("INVALID_STATE");
   const changed = await tx.orderItem.updateMany({ where: { id: item.id, status: item.status, ...ownership }, data: { status: "CANCELLED" } });
-  if (!changed.count) throw new Error("CONCURRENT_CHANGE");
+  if (!changed.count) {
+    const latest = await tx.orderItem.findFirst({ where: { id: item.id, ...ownership }, select: { status: true } });
+    if (latest?.status === "CANCELLED") return { status: "CANCELLED" as const, idempotent: true };
+    throw new Error("CONCURRENT_CHANGE");
+  }
 
   if (item.sellerOfferId) {
-    const offer = await tx.sellerOffer.update({ where: { id: item.sellerOfferId }, data: { stock: { increment: item.quantity } }, select: { stock: true } });
-    await tx.product.update({ where: { id: item.productId }, data: { stock: offer.stock } });
+    await restoreCancellation(tx, { sellerOfferId: item.sellerOfferId, productId: item.productId, quantity: item.quantity, orderId: item.orderId, orderItemId: item.id, actorUserId: input.actor.userId, actorSellerId: input.actor.kind === "SELLER" ? input.actor.sellerId : undefined, idempotencyKey: `stock:v1:cancellation:${item.id}`, source: input.actor.kind });
   } else await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
   await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED", availableAt: null } });
 

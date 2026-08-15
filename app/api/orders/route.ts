@@ -11,6 +11,7 @@ import { evaluateCoupon } from "@/app/lib/coupon-evaluation";
 import { customerOrderSelect } from "@/app/lib/customer-order-select";
 import { ensureCatalogForProduct } from "@/app/lib/catalog-sync";
 import { revalidateOffer } from "@/app/lib/buybox";
+import { decrementForCheckout, StockTruthError } from "@/app/lib/stock-truth";
 
 const checkoutSchema = z.object({
   clientRequestId: z.string().uuid(),
@@ -47,10 +48,8 @@ export async function POST(request: Request) {
         if ((item.sellerOfferId && item.sellerOfferId !== product.sellerOffer.id) || (item.catalogProductId && item.catalogProductId !== product.catalogProductId) || product.sellerOffer.catalogProductId !== product.catalogProductId || product.sellerOffer.sellerId !== product.sellerId) throw new Error("Sepetteki ürün ile satıcı teklifi eşleşmiyor.");
         const validation = revalidateOffer(product.sellerOffer.catalogProduct, { ...product.sellerOffer, price: Number(product.sellerOffer.price), sellerStatus: product.sellerOffer.seller.status }, item.quantity);
         if (!validation.eligible) throw new Error(`${product.name} için seçili satıcı teklifi artık uygun değil.`);
-        const changed = await tx.sellerOffer.updateMany({ where: { id: product.sellerOffer.id, sellerId: product.sellerId, active: true, stock: { gte: item.quantity } }, data: { stock: { decrement: item.quantity } } });
-        if (!changed.count) throw new Error(`${product.name} için stok güncellendi; sepetinizi yeniden kontrol edin.`);
-        const currentOffer = await tx.sellerOffer.findUniqueOrThrow({ where: { id: product.sellerOffer.id }, select: { stock: true } });
-        await tx.product.update({ where: { id: product.id }, data: { stock: currentOffer.stock } });
+        try { await decrementForCheckout(tx, { sellerOfferId: product.sellerOffer.id, productId: product.id, sellerId: product.sellerId, quantity: item.quantity, idempotencyKey: `stock:v1:checkout:${clientRequestId}:${product.sellerOffer.id}`, source: "CHECKOUT", actorSellerId: product.sellerId }); }
+        catch (error) { if (error instanceof StockTruthError && error.code === "INSUFFICIENT_STOCK") throw new Error(`${product.name} için stok güncellendi; sepetinizi yeniden kontrol edin.`); throw error; }
         total = total.add(product.sellerOffer.price.mul(item.quantity)).toDecimalPlaces(2);
       }
       const subtotal=total;let coupon=null;let discount=new Prisma.Decimal(0);let discounts=new Map<string,Prisma.Decimal>();

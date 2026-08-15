@@ -57,12 +57,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: match.type === "CONFLICT" ? "Katalog kimliği mevcut ürün verisiyle çelişiyor; yönetici incelemesi gerekli." : "Ürün otomatik birleştirilmedi; katalog incelemesi gerekli.", reasonCode: match.reason }, { status: 409 });
       }
       if (match.type === "SELLER_SKU_MATCH" && sellerSkuOffer?.legacyProductId) {
-        const product = await prisma.$transaction(async (tx) => {
-          const legacy = await tx.product.update({ where: { id: sellerSkuOffer.legacyProductId! }, data: { price: parsed.data.price, oldPrice: parsed.data.oldPrice ?? null, stock: parsed.data.stock, active: true } });
-          await tx.sellerOffer.update({ where: { id: sellerSkuOffer.id }, data: { price: parsed.data.price, listPrice: parsed.data.oldPrice ?? null, stock: parsed.data.stock, active: true, matchStatus: match.type, matchReason: match.reason, matchConfidence: match.confidence } });
-          return legacy;
-        });
-        return NextResponse.json(product);
+        return NextResponse.json({ error: "Bu SKU mağazanızda zaten var; stok değişikliği için mevcut ürünü düzenleyin." }, { status: 409 });
       }
       const product = await prisma.$transaction(async (tx) => {
         const existingCatalog = match.catalogProductId ? await tx.catalogProduct.findUniqueOrThrow({ where: { id: match.catalogProductId } }) : null;
