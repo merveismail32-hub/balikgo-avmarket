@@ -9,7 +9,7 @@ export default async function SellerDashboard() {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const month = new Date(today.getFullYear(), today.getMonth(), 1);
   const [total, active, outOfStock, statusCounts, todaySales, monthSales, recent] = await Promise.all([
-    prisma.product.count({ where: { sellerId: seller.id } }), prisma.product.count({ where: { sellerId: seller.id, active: true } }), prisma.product.count({ where: { sellerId: seller.id, stock: 0, active: true } }),
+    prisma.product.count({ where: { sellerId: seller.id } }), prisma.product.count({ where: { sellerId: seller.id, active: true } }), prisma.sellerOffer.count({ where: { sellerId: seller.id, stock: 0, active: true } }),
     prisma.orderItem.groupBy({ by: ["status"], where: { sellerId: seller.id }, _count: { _all: true } }),
     prisma.orderItem.aggregate({ where: { sellerId: seller.id, createdAt: { gte: today }, status: { not: "CANCELLED" } }, _sum: { sellerNetAmount: true, unitPrice: true } }),
     prisma.orderItem.aggregate({ where: { sellerId: seller.id, createdAt: { gte: month }, status: { not: "CANCELLED" } }, _sum: { sellerNetAmount: true, unitPrice: true } }),

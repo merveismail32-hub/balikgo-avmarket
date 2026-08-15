@@ -35,8 +35,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   });
   if (!updated) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
 
-  const product = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true, price: true, stock: true, active: true, sellerOffer: { select: { inventoryVersion: true } } } });
+  const product = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true, price: true, active: true, sellerOffer: { select: { stock: true, inventoryVersion: true } } } });
   if (!product) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
-  return NextResponse.json({ ...product, inventoryVersion: product.sellerOffer?.inventoryVersion, sellerOffer: undefined, price: Number(product.price) });
+  return NextResponse.json({ ...product, stock: product.sellerOffer?.stock ?? 0, inventoryVersion: product.sellerOffer?.inventoryVersion, sellerOffer: undefined, price: Number(product.price) });
   } catch (error) { if (error instanceof StockTruthError && error.code === "STALE_INVENTORY_VERSION") return NextResponse.json({ error: "Stok başka bir işlem tarafından değiştirildi; sayfayı yenileyin." }, { status: 409 }); throw error; }
 }

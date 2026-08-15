@@ -8,9 +8,9 @@ export default async function InventoryPricePage() {
   const products = await prisma.product.findMany({
     where: { sellerId: seller.id },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, sku: true, category: true, imageUrl: true, price: true, stock: true, active: true, sellerOffer: { select: { inventoryVersion: true } }, catalogProduct: { select: { model: true, barcode: true } } },
+    select: { id: true, name: true, sku: true, category: true, imageUrl: true, price: true, active: true, sellerOffer: { select: { stock: true, inventoryVersion: true } }, catalogProduct: { select: { model: true, barcode: true } } },
   });
-  const rows = products.map((product) => ({ ...product, inventoryVersion: product.sellerOffer?.inventoryVersion ?? 0, model: product.catalogProduct?.model ?? null, barcode: product.catalogProduct?.barcode ?? null, price: Number(product.price) }));
+  const rows = products.map((product) => ({ ...product, stock: product.sellerOffer?.stock ?? 0, inventoryVersion: product.sellerOffer?.inventoryVersion ?? 0, model: product.catalogProduct?.model ?? null, barcode: product.catalogProduct?.barcode ?? null, price: Number(product.price) }));
 
   return <SellerPanelShell title="Stok & Fiyat" description="Ürün fiyatlarını ve stoklarını hızlıca güncelleyin." storeName={seller.storeName}><InventoryPriceTable initialProducts={rows} /></SellerPanelShell>;
 }

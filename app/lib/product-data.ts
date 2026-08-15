@@ -4,7 +4,7 @@ import type { Product as DatabaseProduct, SellerProfile } from "@prisma/client";
 import { formatPrice, type Product } from "./products";
 import { findPublicCatalogByAnyId, listPublicCatalog, toStoreCatalogProduct } from "./catalog-data";
 
-export function toStoreProduct(product: (DatabaseProduct & { seller?: SellerProfile }) | Product): Product {
+export function toStoreProduct(product: (DatabaseProduct & { seller?: SellerProfile }) | Product, offerStock?: number): Product {
   if ("unitPrice" in product) return product;
   const price = Number(product.price);
   const oldPrice = product.oldPrice ? Number(product.oldPrice) : 0;
@@ -27,7 +27,7 @@ export function toStoreProduct(product: (DatabaseProduct & { seller?: SellerProf
     sellerName: product.seller?.storeName,
     storeSlug: product.seller?.storeSlug ?? undefined,
     images: Array.isArray(product.images) ? product.images.filter((value): value is string => typeof value === "string") : [product.imageUrl],
-    stock: product.stock,
+    stock: offerStock ?? 0,
     technicalDetails: product.technicalDetails,
     shippingInfo: product.shippingInfo,
   };

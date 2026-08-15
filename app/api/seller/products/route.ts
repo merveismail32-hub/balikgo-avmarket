@@ -20,7 +20,8 @@ function slugify(value: string) { return value.toLocaleLowerCase("tr-TR").normal
 export async function GET() {
   const seller = await getApprovedSeller();
   if (!seller) return NextResponse.json({ error: "Satıcı yetkisi gerekli." }, { status: 403 });
-  return NextResponse.json(await prisma.product.findMany({ where: { sellerId: seller.id }, orderBy: { createdAt: "desc" } }));
+  const products = await prisma.product.findMany({ where: { sellerId: seller.id }, include: { sellerOffer: { select: { stock: true, inventoryVersion: true } } }, orderBy: { createdAt: "desc" } });
+  return NextResponse.json(products.map(({ sellerOffer, ...product }) => ({ ...product, stock: sellerOffer?.stock ?? 0, inventoryVersion: sellerOffer?.inventoryVersion ?? 0 })));
 }
 
 export async function POST(request: Request) {
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
         const existingCatalog = match.catalogProductId ? await tx.catalogProduct.findUniqueOrThrow({ where: { id: match.catalogProductId } }) : null;
         const catalog = existingCatalog ?? await tx.catalogProduct.create({ data: { slug, name: parsed.data.name, category: category.name, brand: brand?.name ?? "Markasız", categoryId: category.id, brandId: brand?.id ?? null, model: parsed.data.model || null, barcode: parsed.data.barcode || null, normalizedGtin: gtin.valid ? gtin.normalized : null, normalizedName, normalizedBrand, normalizedModel, variantKey: parsed.data.variantKey || null, identityKey: gtin.valid ? `gtin:${gtin.normalized}` : `candidate:${crypto.randomUUID()}`, description: parsed.data.description, imageUrl: parsed.data.imageUrl, images, technicalDetails: parsed.data.technicalDetails, shippingInfo: parsed.data.shippingInfo, moderationStatus: "PENDING" } });
         const legacy = await tx.product.create({ data: { name: parsed.data.name, categoryId: category.id, category: category.name, brandId: brand?.id ?? null, brand: brand?.name ?? "Markasız", sku: sellerSku, price: parsed.data.price, oldPrice: parsed.data.oldPrice ?? null, stock: parsed.data.stock, description: parsed.data.description, technicalDetails: parsed.data.technicalDetails, shippingInfo: parsed.data.shippingInfo, imageUrl: parsed.data.imageUrl, images, slug, sellerId: seller.id, moderationStatus: "PENDING", catalogProductId: catalog.id } });
-        await tx.sellerOffer.create({ data: { sellerId: seller.id, catalogProductId: catalog.id, legacyProductId: legacy.id, sellerSku, price: legacy.price, listPrice: legacy.oldPrice, stock: legacy.stock, active: legacy.active, matchStatus: match.type, matchReason: match.reason, matchConfidence: match.confidence } });
+        await tx.sellerOffer.create({ data: { sellerId: seller.id, catalogProductId: catalog.id, legacyProductId: legacy.id, sellerSku, price: parsed.data.price, listPrice: parsed.data.oldPrice ?? null, stock: parsed.data.stock, active: true, matchStatus: match.type, matchReason: match.reason, matchConfidence: match.confidence } });
         return legacy;
       });
       return NextResponse.json(product, { status: 201 });

@@ -19,9 +19,9 @@ async function getUserId() { const session = await auth(); return session?.user?
 async function responseFor(userId: string) {
   const items = await prisma.cartItem.findMany({ where: { userId }, include: { product: { include: { seller: true } }, sellerOffer: { select: offerSelection } }, orderBy: { createdAt: "asc" } });
   return NextResponse.json(items.map((item) => {
-    const base = toStoreProduct(item.product);
+    const base = toStoreProduct(item.product, item.sellerOffer?.stock ?? 0);
     const available = offerIsEligible(item.sellerOffer, item.quantity);
-    return { ...base, catalogProductId: item.catalogProductId ?? undefined, sellerOfferId: item.sellerOfferId ?? undefined, unitPrice: item.sellerOffer ? Number(item.sellerOffer.price) : base.unitPrice, price: item.sellerOffer ? formatPrice(Number(item.sellerOffer.price)) : base.price, stock: item.sellerOffer?.stock ?? base.stock, sellerName: item.product.seller.storeName, offerAvailable: available, quantity: item.quantity };
+    return { ...base, catalogProductId: item.catalogProductId ?? undefined, sellerOfferId: item.sellerOfferId ?? undefined, unitPrice: item.sellerOffer ? Number(item.sellerOffer.price) : base.unitPrice, price: item.sellerOffer ? formatPrice(Number(item.sellerOffer.price)) : base.price, stock: item.sellerOffer?.stock ?? 0, sellerName: item.product.seller.storeName, offerAvailable: available, quantity: item.quantity };
   }));
 }
 export async function GET() { const userId = await getUserId(); return userId ? responseFor(userId) : NextResponse.json({ error: "Oturum gerekli." }, { status: 401 }); }

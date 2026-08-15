@@ -73,7 +73,7 @@ export function listingWhere(
           },
         }
       : {}),
-    ...(filters.inStock ? { stock: { gt: 0 } } : {}),
+    ...(filters.inStock ? { sellerOffer: { is: { active: true, stock: { gt: 0 }, seller: { status: "APPROVED" } } } } : {}),
     ...(filters.rating ? { rating: { gte: filters.rating } } : {}),
   };
 }

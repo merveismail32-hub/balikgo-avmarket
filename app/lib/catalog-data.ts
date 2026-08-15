@@ -12,7 +12,7 @@ export const publicCatalogPolicy: Prisma.CatalogProductWhereInput = {
     { OR: [{ categoryId: null }, { categoryRecord: { active: true } }] },
     { OR: [{ brandId: null }, { brandRecord: { active: true } }] },
   ],
-  offers: { some: { active: true, stock: { gt: 0 }, price: { gt: 0 }, seller: { status: "APPROVED" } } },
+  offers: { some: { active: true, price: { gt: 0 }, seller: { status: "APPROVED" } } },
 };
 
 export const eligibleOfferPolicy: Prisma.SellerOfferWhereInput = {
@@ -30,7 +30,7 @@ const catalogInclude = {
   categoryRecord: true,
   brandRecord: true,
   offers: {
-    where: { active: true, stock: { gt: 0 }, price: { gt: 0 }, seller: { status: "APPROVED" } },
+    where: { active: true, price: { gt: 0 }, seller: { status: "APPROVED" } },
     include: { seller: true, legacyProduct: true },
     orderBy: [{ price: "asc" as const }, { createdAt: "asc" as const }],
   },
@@ -46,7 +46,7 @@ export function toStoreCatalogProduct(row: PublicCatalogRow, performanceBySeller
     sellerPerformance: performanceBySeller.get(offer.sellerId),
   }));
   const buybox = resolveBuybox({ id: row.id, active: row.active, moderationStatus: row.moderationStatus }, candidates);
-  const selected = buybox.winner;
+  const selected = buybox.winner ?? candidates.toSorted((left, right) => left.price - right.price || left.createdAt.getTime() - right.createdAt.getTime())[0];
   if (!selected?.legacyProduct) return null;
   const price = selected.price;
   const listPrice = selected.listPrice ? Number(selected.listPrice) : 0;
@@ -73,9 +73,9 @@ export function toStoreCatalogProduct(row: PublicCatalogRow, performanceBySeller
     stock: selected.stock,
     technicalDetails: row.technicalDetails,
     shippingInfo: row.shippingInfo,
-    offerCount: buybox.alternatives.length + 1,
+    offerCount: candidates.length,
     handlingTimeDays: selected.handlingTimeDays,
-    alternatives: buybox.alternatives.map((offer) => ({ sellerOfferId: offer.id, sellerName: offer.seller.storeName, storeSlug: offer.seller.storeSlug ?? undefined, price: formatPrice(offer.price), unitPrice: offer.price, stock: offer.stock, handlingTimeDays: offer.handlingTimeDays })),
+    alternatives: (buybox.winner ? buybox.alternatives : candidates.filter((offer) => offer.id !== selected.id)).map((offer) => ({ sellerOfferId: offer.id, sellerName: offer.seller.storeName, storeSlug: offer.seller.storeSlug ?? undefined, price: formatPrice(offer.price), unitPrice: offer.price, stock: offer.stock, handlingTimeDays: offer.handlingTimeDays })),
   };
 }
 
