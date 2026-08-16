@@ -100,6 +100,65 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   return { status: "CANCELLED" as const, idempotent: false, refundId };
 }
 
+export async function requestOrderItemReturn(tx: Prisma.TransactionClient, input: { orderItemId: string; userId: string; reason: string }) {
+  const item = await tx.orderItem.findFirst({
+    where: { id: input.orderItemId, order: { userId: input.userId } },
+    select: { id: true, orderId: true, sellerId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, status: true, order: { select: { orderNumber: true, payment: { select: { id: true, status: true } } } } },
+  });
+  if (!item) return null;
+  if (item.status === "RETURN_REQUESTED") return { status: "RETURN_REQUESTED" as const, idempotent: true };
+  if (item.status !== "DELIVERED" && item.status !== "COMPLETED") throw new Error("INVALID_STATE");
+  const payment = item.order.payment;
+  if (!payment) throw new Error("PAYMENT_NOT_FOUND");
+  if (payment.status !== "PAID" && payment.status !== "PARTIAL_REFUND_PENDING" && payment.status !== "REFUND_PENDING") throw new Error("PAYMENT_NOT_PAID");
+
+  const refund = await tx.refund.upsert({
+    where: { idempotencyKey: `return:${item.id}` },
+    update: {},
+    create: { paymentId: payment.id, orderId: item.orderId, orderItemId: item.id, sellerId: item.sellerId, requestedByUserId: input.userId, idempotencyKey: `return:${item.id}`, amount: item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2), reason: input.reason },
+  });
+  const changed = await tx.orderItem.updateMany({ where: { id: item.id, status: { in: ["DELIVERED", "COMPLETED"] }, order: { userId: input.userId } }, data: { status: "RETURN_REQUESTED" } });
+  if (!changed.count) {
+    const latest = await tx.orderItem.findFirst({ where: { id: item.id, order: { userId: input.userId } }, select: { status: true } });
+    if (latest?.status === "RETURN_REQUESTED") return { status: "RETURN_REQUESTED" as const, idempotent: true };
+    throw new Error("CONCURRENT_CHANGE");
+  }
+
+  await tx.orderStatusHistory.create({ data: { orderItemId: item.id, changedByUserId: input.userId, fromStatus: item.status, toStatus: "RETURN_REQUESTED" } });
+  await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "AVAILABLE", "SCHEDULED"] } }, data: { status: "BLOCKED" } });
+  await synchronizePaymentRefundStatus(tx, payment.id);
+  await tx.financialAuditEvent.create({ data: { paymentId: payment.id, refundId: refund.id, orderId: item.orderId, actorUserId: input.userId, entityType: "REFUND", entityId: refund.id, eventType: "RETURN_REQUESTED", toStatus: "REQUESTED", source: "CUSTOMER" } });
+  await enqueueNotifications(tx, [{ sellerId: item.sellerId, orderId: item.orderId, type: "RETURN_REQUESTED", dedupeKey: `return-request:${refund.id}:seller`, title: "İade talebi", message: `${item.order.orderNumber} siparişindeki ${item.productName} için iade talebi oluşturuldu.` }]);
+  await refreshAggregateOrderStatus(tx, item.orderId);
+  return { status: "RETURN_REQUESTED" as const, idempotent: false };
+}
+
+export async function decideRefund(tx: Prisma.TransactionClient, input: { refundId: string; actorUserId: string; decision: "APPROVE" | "REJECT" }) {
+  const target = input.decision === "APPROVE" ? "APPROVED" as const : "REJECTED" as const;
+  const refund = await tx.refund.findUnique({ where: { id: input.refundId }, select: { id: true, status: true, orderId: true, orderItemId: true, paymentId: true, requestedByUserId: true, sellerId: true, order: { select: { orderNumber: true } } } });
+  if (!refund) return null;
+  if (refund.status === target) return { status: target, idempotent: true };
+  if (refund.status !== "REQUESTED") throw new Error("INVALID_STATE");
+  const changed = await tx.refund.updateMany({ where: { id: refund.id, status: "REQUESTED" }, data: { status: target } });
+  if (!changed.count) {
+    const latest = await tx.refund.findUnique({ where: { id: refund.id }, select: { status: true } });
+    if (latest?.status === target) return { status: target, idempotent: true };
+    throw new Error("CONCURRENT_CHANGE");
+  }
+
+  if (target === "REJECTED") {
+    const restored = await tx.orderItem.updateMany({ where: { id: refund.orderItemId, status: "RETURN_REQUESTED" }, data: { status: "DELIVERED" } });
+    if (restored.count) await tx.orderStatusHistory.create({ data: { orderItemId: refund.orderItemId, changedByUserId: input.actorUserId, fromStatus: "RETURN_REQUESTED", toStatus: "DELIVERED" } });
+    await tx.sellerPayout.updateMany({ where: { orderItemId: refund.orderItemId, status: "BLOCKED" }, data: { status: "PENDING", availableAt: null } });
+  }
+  await synchronizePaymentRefundStatus(tx, refund.paymentId);
+  if (target === "REJECTED") await reconcileOrderPayouts(tx, refund.orderId);
+  await refreshAggregateOrderStatus(tx, refund.orderId);
+  await tx.financialAuditEvent.create({ data: { paymentId: refund.paymentId, refundId: refund.id, orderId: refund.orderId, actorUserId: input.actorUserId, entityType: "REFUND", entityId: refund.id, eventType: `REFUND_${target}`, fromStatus: refund.status, toStatus: target, source: "ADMIN" } });
+  await enqueueNotifications(tx, [{ userId: refund.requestedByUserId ?? undefined, orderId: refund.orderId, type: `REFUND_${target}`, dedupeKey: `refund:${refund.id}:${target}:customer`, title: target === "APPROVED" ? "İade talebi onaylandı" : "İade talebi sonuçlandı", message: `${refund.order.orderNumber} numaralı siparişinizin iade talebi ${target === "APPROVED" ? "onaylandı; finansal iade henüz tamamlanmadı" : "reddedildi"}.` }, { sellerId: refund.sellerId, orderId: refund.orderId, type: `REFUND_${target}`, dedupeKey: `refund:${refund.id}:${target}:seller`, title: "İade talebi güncellendi", message: `${refund.order.orderNumber} siparişindeki iade talebi güncellendi.` }]);
+  return { status: target, idempotent: false };
+}
+
 export async function transitionOrderItem(tx: Prisma.TransactionClient, input: { orderItemId: string; sellerId: string; actorUserId: string; target: Exclude<OrderStatus, "CANCELLED" | "RETURN_REQUESTED" | "RETURNED">; allowedFrom: OrderStatus[]; shippingCompany?: string; trackingNumber?: string; notification?: NotificationDraft }) {
   const item = await tx.orderItem.findFirst({ where: { id: input.orderItemId, sellerId: input.sellerId }, select: { id: true, orderId: true, status: true } });
   if (!item) return null;
