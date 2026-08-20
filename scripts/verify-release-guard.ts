@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import { readFile, rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fullReadinessDecision, releaseDecision, runCommandGate, writeReport } from "./release-guard-core.ts";
+
+const root = resolve(import.meta.dirname, ".."); const secret = "qa-super-secret"; const node = process.execPath;
+const pass = await runCommandGate({ name: "pass", group: "SELF", command: node, args: ["-e", "process.exit(0)"], timeoutMs: 5_000 }, { cwd: root, secrets: [secret] });
+const fail = await runCommandGate({ name: "fail", group: "SELF", command: node, args: ["-e", `console.error('${secret}');process.exit(7)`], timeoutMs: 5_000 }, { cwd: root, secrets: [secret] });
+const advisory = { ...fail, name: "advisory", blocking: false };
+const timeout = await runCommandGate({ name: "timeout", group: "SELF", command: node, args: ["-e", "setTimeout(()=>{},10000)"], timeoutMs: 25 }, { cwd: root, secrets: [secret] });
+const spawnFailure = await runCommandGate({ name: "server-start", group: "SELF", command: resolve(root, "missing-server-binary"), args: [], timeoutMs: 100 }, { cwd: root, secrets: [secret] });
+assert.equal(pass.status, "PASS"); assert.equal(releaseDecision("fast", new Date(0).toISOString(), 1, [pass]).decision, "RELEASE_ALLOWED");
+assert.equal(fail.status, "FAIL"); assert.equal(releaseDecision("fast", new Date(0).toISOString(), 1, [pass, fail]).decision, "RELEASE_BLOCKED");
+assert.equal(releaseDecision("fast", new Date(0).toISOString(), 1, [pass, advisory]).decision, "RELEASE_ALLOWED");
+assert.equal(timeout.status, "BLOCKED"); assert.equal(timeout.classification, "INFRA_BLOCKED");
+assert.equal(spawnFailure.status, "BLOCKED"); assert.equal(spawnFailure.classification, "INFRA_BLOCKED");
+assert.deepEqual(fullReadinessDecision({ caExists: true, passwordLength: 0, localSecretIgnored: true }), { ready: false, status: "BLOCKED", classification: "SECRET_MISSING", reason: "QA_SHIPPING_PASSWORD_MISSING_OR_TOO_SHORT" });
+assert.equal(fullReadinessDecision({ databaseError: "REFUSING_NON_TEST_DATABASE", caExists: true, passwordLength: 12, localSecretIgnored: true }).classification, "DB_GUARD_FAILURE");
+assert.equal(fullReadinessDecision({ caExists: true, passwordLength: 12, localSecretIgnored: true }).ready, true);
+assert.ok(!fail.reason?.includes(secret));
+const reportPath = resolve(root, ".release-guard/self-test.json"); const report = releaseDecision("fast", new Date(0).toISOString(), 1, [pass, advisory, timeout]); await writeReport(reportPath, report);
+const parsed = JSON.parse(await readFile(reportPath, "utf8")); assert.equal(parsed.profile, "fast"); assert.ok(!JSON.stringify(parsed).includes(secret)); await rm(reportPath, { force: true });
+console.log("PASS: release decision, blocking/advisory behavior, timeout classification, JSON validity and secret redaction verified.");

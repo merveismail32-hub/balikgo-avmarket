@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "release:guard": "node --env-file=.env --experimental-strip-types scripts/run-release-guard.ts",
+    "test:release-guard": "node --experimental-strip-types scripts/verify-release-guard.ts",
     "lint": "eslint",
     "make-admin": "tsx scripts/make-admin.ts",
     "test:order-state-machine": "tsx scripts/verify-order-state-machine.ts",
