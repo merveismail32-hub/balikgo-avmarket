@@ -9,6 +9,7 @@ import { publicProductPolicy } from "@/app/lib/product-visibility";
 import { normalizeCouponCode } from "@/app/lib/coupon";
 import { evaluateCoupon } from "@/app/lib/coupon-evaluation";
 import { customerOrderSelect } from "@/app/lib/customer-order-select";
+import { toCustomerOrderDto } from "@/app/lib/customer-shipment-dto";
 import { ensureCatalogForProduct } from "@/app/lib/catalog-sync";
 import { revalidateOffer } from "@/app/lib/buybox";
 import { decrementForCheckout, StockTruthError } from "@/app/lib/stock-truth";
@@ -25,7 +26,8 @@ const checkoutSchema = z.object({
 const internalIncludes = { items: { include: { seller: { select: { id: true, storeName: true, storeSlug: true } } } } } as const;
 export async function GET() {
   const session = await auth(); if (!session?.user?.id) return NextResponse.json({ error: "Oturum gerekli." }, { status: 401 });
-  return NextResponse.json(await prisma.order.findMany({ where: { userId: session.user.id }, select: customerOrderSelect, orderBy: { createdAt: "desc" } }));
+  const orders = await prisma.order.findMany({ where: { userId: session.user.id }, select: customerOrderSelect, orderBy: { createdAt: "desc" } });
+  return NextResponse.json(orders.map(toCustomerOrderDto));
 }
 export async function POST(request: Request) {
   const session = await auth(); if (!session?.user?.id) return NextResponse.json({ error: "Sipariş için giriş yapmalısınız." }, { status: 401 });

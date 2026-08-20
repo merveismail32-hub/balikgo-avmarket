@@ -146,11 +146,21 @@ enum NotificationChannel {
 }
 
 enum ShipmentStatus {
+  CREATED
   NOT_READY
   PREPARING
+  READY_FOR_SHIPMENT
   READY_TO_SHIP
+  HANDED_TO_CARRIER
   SHIPPED
+  IN_TRANSIT
+  AT_TRANSFER_CENTER
+  OUT_FOR_DELIVERY
+  AT_PICKUP_POINT
   DELIVERED
+  DELIVERY_FAILED
+  RETURNING
+  RETURNED
   CANCELLED
 }
 
@@ -512,9 +522,28 @@ model Shipment {
   order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   seller              SellerProfile  @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   items               ShipmentItem[]
+  events              ShipmentEvent[]
 
   @@index([orderId, createdAt])
   @@index([sellerId, status, createdAt])
+}
+
+model ShipmentEvent {
+  id              String         @id @default(cuid())
+  shipmentId      String
+  source          String         @db.VarChar(40)
+  externalEventId String         @db.VarChar(191)
+  status          ShipmentStatus
+  eventTime       DateTime
+  receivedAt      DateTime       @default(now())
+  location        String?        @db.VarChar(160)
+  description     String?        @db.VarChar(500)
+  payloadHash     String?        @db.VarChar(64)
+  applied         Boolean        @default(false)
+  shipment        Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, source, externalEventId])
+  @@index([shipmentId, eventTime, receivedAt])
 }
 
 model ShipmentItem {

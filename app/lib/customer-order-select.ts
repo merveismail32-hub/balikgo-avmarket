@@ -24,6 +24,7 @@ export const customerOrderSelect = {
       preparedAt: true, shippedAt: true, deliveredAt: true, estimatedDeliveryAt: true,
       seller: { select: { id: true, storeName: true, storeSlug: true } },
       items: { select: { quantity: true, orderItem: { select: { id: true, productName: true, productSku: true, productImageUrl: true, unitPrice: true, status: true } } } },
+      events: { orderBy: [{ eventTime: "asc" }, { receivedAt: "asc" }], select: { id: true, status: true, eventTime: true, receivedAt: true, location: true, description: true, applied: true } },
     },
   },
   items: {
@@ -44,3 +45,5 @@ export const customerOrderSelect = {
     },
   },
 } satisfies Prisma.OrderSelect;
+
+export type CustomerOrderRecord = Prisma.OrderGetPayload<{ select: typeof customerOrderSelect }>;
