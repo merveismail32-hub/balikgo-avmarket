@@ -18,6 +18,12 @@ export const trackingUrlFor = (code: string | null, number: string | null) => co
 
 export const CANONICAL_SHIPMENT_STATUSES = ["CREATED", "READY_FOR_SHIPMENT", "HANDED_TO_CARRIER", "IN_TRANSIT", "AT_TRANSFER_CENTER", "OUT_FOR_DELIVERY", "AT_PICKUP_POINT", "DELIVERED", "DELIVERY_FAILED", "RETURNING", "RETURNED", "CANCELLED"] as const;
 export type CanonicalShipmentStatus = (typeof CANONICAL_SHIPMENT_STATUSES)[number];
+export const CANONICAL_SHIPMENT_STATUS_LABELS: Record<CanonicalShipmentStatus, string> = {
+  CREATED: "Gönderi oluşturuldu", READY_FOR_SHIPMENT: "Kargoya hazır", HANDED_TO_CARRIER: "Kargoya verildi",
+  IN_TRANSIT: "Yolda", AT_TRANSFER_CENTER: "Transfer merkezinde", OUT_FOR_DELIVERY: "Dağıtıma çıktı",
+  AT_PICKUP_POINT: "Teslimat noktasında", DELIVERED: "Teslim edildi", DELIVERY_FAILED: "Teslimat başarısız",
+  RETURNING: "İade sürecinde", RETURNED: "İade edildi", CANCELLED: "İptal edildi",
+};
 const CARRIER_STATUS_ALIASES: Record<string, CanonicalShipmentStatus> = {
   CREATED: "CREATED", NOT_READY: "CREATED", PREPARING: "CREATED",
   READY: "READY_FOR_SHIPMENT", READY_FOR_SHIPMENT: "READY_FOR_SHIPMENT", READY_TO_SHIP: "READY_FOR_SHIPMENT",
@@ -74,6 +80,7 @@ const SHIPMENT_ORDER_STATUS: Record<ShipmentStatus, ShipmentOrderStatus> = {
 export const shipmentToOrderStatus = (status: ShipmentStatus): ShipmentOrderStatus => SHIPMENT_ORDER_STATUS[status];
 
 export const canonicalShipmentStatus = (status: ShipmentStatus): CanonicalShipmentStatus => ({ NOT_READY: "CREATED", PREPARING: "CREATED", READY_TO_SHIP: "READY_FOR_SHIPMENT", SHIPPED: "HANDED_TO_CARRIER" } as Partial<Record<ShipmentStatus, CanonicalShipmentStatus>>)[status] ?? status as CanonicalShipmentStatus;
+export const shipmentStatusLabel = (status: ShipmentStatus) => CANONICAL_SHIPMENT_STATUS_LABELS[canonicalShipmentStatus(status)];
 
 export function carrierEventDecision(current: ShipmentStatus, target: ShipmentStatus, eventTime: Date, latestAppliedEventTime?: Date) {
   if (latestAppliedEventTime && eventTime < latestAppliedEventTime) return { apply: false, stale: true, equivalent: false } as const;
