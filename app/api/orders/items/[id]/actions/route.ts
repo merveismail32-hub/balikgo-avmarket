@@ -23,7 +23,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return result ? NextResponse.json({ ok: true, ...result }) : NextResponse.json({ error: "Sipariş kalemi bulunamadı." }, { status: 404 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (message === "INVALID_STATE" || message === "CONCURRENT_CHANGE") return NextResponse.json({ error: "Bu sipariş kalemi mevcut durumunda bu işlem için uygun değil." }, { status: 409 });
+    if (message === "CARRIER_HANDOFF") return NextResponse.json({ error: "Bu ürün kargoya verildiği için artık iptal edilemez. Teslimattan sonra iade talebi oluşturabilirsiniz." }, { status: 409 });
+    if (message === "RETURN_REQUIRED") return NextResponse.json({ error: "Teslim edilen ürünler iptal edilemez; iade talebi oluşturabilirsiniz." }, { status: 409 });
+    if (message === "INVALID_ITEM_STATE" || message === "INVALID_STATE" || message === "CONCURRENT_CHANGE") return NextResponse.json({ error: "Bu sipariş kalemi mevcut durumunda bu işlem için uygun değil." }, { status: 409 });
     if (message === "PAYMENT_NOT_FOUND" || message === "PAYMENT_NOT_PAID") return NextResponse.json({ error: "Bu sipariş için uygun bir ödeme kaydı bulunamadı." }, { status: 409 });
     console.error("[customer-order-action] failed", { orderItemId: id, code: (error as { code?: string }).code });
     return NextResponse.json({ error: "İşlem tamamlanamadı. Lütfen tekrar deneyin." }, { status: 500 });

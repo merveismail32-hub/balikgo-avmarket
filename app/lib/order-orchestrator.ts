@@ -4,6 +4,7 @@ import { Prisma, type OrderStatus } from "@prisma/client";
 import { enqueueNotifications, type NotificationDraft } from "./notifications";
 import { aggregateOrderStatus, cancellationLedgerReversals, pendingRefundPaymentStatus } from "./order-invariants";
 import { releaseOrderItemReservation } from "./stock-reservation";
+import { evaluateCancellationEligibility, isPreHandoffShipmentStatus } from "./cancellation-eligibility";
 
 type CancellationActor = { kind: "CUSTOMER"; userId: string } | { kind: "SELLER"; userId: string; sellerId: string };
 
@@ -60,13 +61,24 @@ export async function ensurePaidCancellationIntegrity(tx: Prisma.TransactionClie
 
 export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { orderItemId: string; actor: CancellationActor; reason?: string }) {
   const ownership = input.actor.kind === "CUSTOMER" ? { order: { userId: input.actor.userId } } : { sellerId: input.actor.sellerId };
-  const item = await tx.orderItem.findFirst({
+  let item = await tx.orderItem.findFirst({
     where: { id: input.orderItemId, ...ownership },
-    select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, commissionAmount: true, status: true, stockReservationState: true, payout: { select: { id: true } }, order: { select: { userId: true, orderNumber: true, payment: { select: { id: true, amount: true, status: true } } } } },
+    select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, commissionAmount: true, status: true, stockReservationState: true, payout: { select: { id: true } }, shipmentItems: { select: { shipmentId: true, shipment: { select: { status: true } } } }, order: { select: { userId: true, orderNumber: true, payment: { select: { id: true, amount: true, status: true } } } } },
   });
   if (!item) return null;
   if (item.status === "CANCELLED") return { status: "CANCELLED" as const, idempotent: true };
-  if (item.status !== "NEW" && item.status !== "PREPARING") throw new Error("INVALID_STATE");
+  const shipmentIds = [...new Set(item.shipmentItems.map((link) => link.shipmentId))].sort();
+  if (shipmentIds.length) {
+    await tx.$queryRaw`SELECT id FROM "Shipment" WHERE id IN (${Prisma.join(shipmentIds)}) ORDER BY id FOR UPDATE`;
+    item = await tx.orderItem.findFirst({
+      where: { id: input.orderItemId, ...ownership },
+      select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, commissionAmount: true, status: true, stockReservationState: true, payout: { select: { id: true } }, shipmentItems: { select: { shipmentId: true, shipment: { select: { status: true } } } }, order: { select: { userId: true, orderNumber: true, payment: { select: { id: true, amount: true, status: true } } } } },
+    });
+    if (!item) return null;
+    if (item.status === "CANCELLED") return { status: "CANCELLED" as const, idempotent: true };
+  }
+  const eligibility = evaluateCancellationEligibility({ itemStatus: item.status, paymentStatus: item.order.payment?.status ?? null, shipmentStatuses: item.shipmentItems.map((link) => link.shipment.status) });
+  if (!eligibility.eligible) throw new Error(eligibility.code);
   const changed = await tx.orderItem.updateMany({ where: { id: item.id, status: item.status, ...ownership }, data: { status: "CANCELLED" } });
   if (!changed.count) {
     const latest = await tx.orderItem.findFirst({ where: { id: item.id, ...ownership }, select: { status: true } });
@@ -75,11 +87,23 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   }
 
   await releaseOrderItemReservation(tx, { orderItemId: item.id, reason: input.actor.kind === "CUSTOMER" ? "CUSTOMER_CANCELLATION" : "SELLER_CANCELLATION", allowConsumed: item.stockReservationState === "CONSUMED", actorUserId: input.actor.userId, actorSellerId: input.actor.kind === "SELLER" ? input.actor.sellerId : undefined });
+  const cancellationTime = new Date();
+  for (const link of item.shipmentItems) {
+    if (!isPreHandoffShipmentStatus(link.shipment.status)) throw new Error("CARRIER_HANDOFF");
+    const activeItems = await tx.shipmentItem.count({ where: { shipmentId: link.shipmentId, orderItem: { status: { not: "CANCELLED" } } } });
+    if (activeItems === 0) {
+      if (link.shipment.status === "CANCELLED") continue;
+      const cancelled = await tx.shipment.updateMany({ where: { id: link.shipmentId, status: link.shipment.status }, data: { status: "CANCELLED", cancelledAt: cancellationTime } });
+      if (cancelled.count) await tx.shipmentEvent.create({ data: { shipmentId: link.shipmentId, source: "ORCHESTRATOR", externalEventId: `item-cancellation:${item.id}`, status: "CANCELLED", eventTime: cancellationTime, applied: true, description: "Shipment cancelled because no active items remain" } });
+    } else {
+      await tx.shipmentItem.deleteMany({ where: { shipmentId: link.shipmentId, orderItemId: item.id } });
+    }
+  }
   await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "BLOCKED", "AVAILABLE", "SCHEDULED"] } }, data: { status: "CANCELLED", availableAt: null } });
 
   let refundId: string | null = null;
   const payment = item.order.payment;
-  if (payment?.status === "PAID" || payment?.status === "PARTIAL_REFUND_PENDING" || payment?.status === "REFUND_PENDING") {
+  if (eligibility.refundRequired && payment) {
     const amount = item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2);
     const refund = await tx.refund.upsert({ where: { idempotencyKey: `cancellation:${item.id}` }, update: {}, create: { paymentId: payment.id, orderId: item.orderId, orderItemId: item.id, sellerId: item.sellerId, requestedByUserId: input.actor.userId, idempotencyKey: `cancellation:${item.id}`, amount, reason: input.reason?.trim() || `${input.actor.kind === "CUSTOMER" ? "Müşteri" : "Satıcı"} sipariş iptali`, status: "REQUESTED" } });
     refundId = refund.id;

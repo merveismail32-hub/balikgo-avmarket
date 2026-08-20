@@ -73,7 +73,7 @@ export async function PATCH(request: Request, { params }: RouteContext<"/api/sel
     return result ? NextResponse.json({ ok: true, ...result }) : NextResponse.json({ error: "Sipariş kalemi bulunamadı." }, { status: 404 });
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : "";
-    if (["INVALID_TRANSITION", "CONCURRENT_CHANGE", "PAYMENT_NOT_PAID"].includes(message)) return NextResponse.json({ error: "Sipariş durumu veya ödeme bu işlem için uygun değil." }, { status: 409 });
+    if (["INVALID_TRANSITION", "INVALID_ITEM_STATE", "CARRIER_HANDOFF", "RETURN_REQUIRED", "CONCURRENT_CHANGE", "PAYMENT_NOT_PAID"].includes(message)) return NextResponse.json({ error: "Sipariş durumu, gönderi veya ödeme bu işlem için uygun değil." }, { status: 409 });
     console.error("[seller-orders] Sipariş güncellenemedi", { orderItemId: id, sellerId: seller.id, code: (reason as { code?: string }).code });
     return NextResponse.json({ error: "Sipariş güncellenemedi. Lütfen tekrar deneyin." }, { status: 500 });
   }

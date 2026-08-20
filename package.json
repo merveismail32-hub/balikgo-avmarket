@@ -13,6 +13,7 @@
     "test:finance-invariants": "tsx scripts/verify-finance-invariants.ts",
     "test:shipping": "tsx scripts/verify-shipping.ts",
     "test:shipment-orchestration": "tsx scripts/verify-shipment-orchestration-v1.ts",
+    "test:cancellation-orchestration": "node --experimental-strip-types scripts/verify-cancellation-orchestration-v1.ts",
     "test:shipping-runtime": "node --env-file=.env --conditions=react-server --import tsx scripts/verify-shipping-runtime.ts",
     "catalog:backfill": "tsx scripts/backfill-catalog-offers.ts",
     "test:db-guard": "node --experimental-strip-types scripts/verify-test-db-guard.ts",
