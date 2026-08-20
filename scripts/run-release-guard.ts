@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { validateTestDatabaseEnvironment } from "./guarded-test-prisma.ts";
+import { getFeatureSafetySnapshot, loadFeatureSafetyConfig } from "../app/lib/feature-flags-core.ts";
 import { fullReadinessDecision, releaseDecision, runCommandGate, writeReport, type CommandGate, type FailureClassification, type GateResult } from "./release-guard-core.ts";
 
 const root = resolve(import.meta.dirname, "..");
@@ -58,6 +59,7 @@ const gates: CommandGate[] = [
   command("buybox", "ORDER_SAFETY", nodeStrip("scripts/verify-buybox.ts"), 30_000),
   command("shipping-contract", "SHIPMENT_SAFETY", nodeTs("scripts/verify-shipping.ts"), 30_000),
   command("shipment-orchestration", "SHIPMENT_SAFETY", nodeTs("scripts/verify-shipment-orchestration-v1.ts"), 30_000),
+  command("release-safety", "RELEASE_SAFETY", nodeTs("scripts/verify-release-safety.ts"), 30_000, "SECURITY_FAILURE"),
   command("typescript", "CODE_QUALITY", [node, [resolve(root, "node_modules/typescript/bin/tsc"), "--noEmit"]], 120_000, "CODE_REGRESSION"),
   command("lint", "CODE_QUALITY", [node, [resolve(root, "node_modules/eslint/bin/eslint.js"), "."]], 120_000, "CODE_REGRESSION"),
   command("build", "CODE_QUALITY", [node, [resolve(root, "node_modules/next/dist/bin/next"), "build"]], 300_000, "BUILD_FAILURE"),
@@ -81,7 +83,7 @@ async function main() {
     for (const gate of fullGates) { if (!fullReady) gate.skip = "FULL_ENVIRONMENT_NOT_READY"; const result = await runCommandGate(gate, { cwd: root, secrets }); results.push(result); console.log(`${result.status.padEnd(7)} ${result.group}/${result.name} (${result.durationMs}ms)`); }
     const runtimeResults = await runtimeGates(password, fullReady); for (const runtime of runtimeResults) { results.push(runtime); console.log(`${runtime.status.padEnd(7)} ${runtime.group}/${runtime.name} (${runtime.durationMs}ms)`); }
   }
-  const report = releaseDecision(profile, startedAt, Math.round(performance.now() - started), results); await writeReport(reportPath, report);
+  const report = releaseDecision(profile, startedAt, Math.round(performance.now() - started), results); report.releaseSafety = getFeatureSafetySnapshot(loadFeatureSafetyConfig(process.env.BALIKGO_RELEASE_SAFETY_CONFIG)); await writeReport(reportPath, report);
   console.log(`\n${report.decision} (${profile.toUpperCase()})`); console.log(`Report: ${reportPath.replace(root, ".")}`); process.exitCode = report.overall === "PASS" ? 0 : 1;
 }
 void main().catch((error) => { console.error("RELEASE_BLOCKED", error instanceof Error ? error.message : "UNKNOWN"); process.exitCode = 1; });

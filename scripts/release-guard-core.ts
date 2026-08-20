@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 export type GateStatus = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
 export type FailureClassification = "CODE_REGRESSION" | "TEST_FAILURE" | "INFRA_BLOCKED" | "SECRET_MISSING" | "DB_GUARD_FAILURE" | "BUILD_FAILURE" | "SECURITY_FAILURE" | "UNKNOWN";
 export type GateResult = { name: string; group: string; status: GateStatus; durationMs: number; blocking: boolean; classification?: FailureClassification; reason?: string };
-export type GuardReport = { profile: "fast" | "full"; overall: "PASS" | "FAIL"; decision: "RELEASE_ALLOWED" | "RELEASE_BLOCKED"; startedAt: string; durationMs: number; gates: GateResult[] };
+export type GuardReport = { profile: "fast" | "full"; overall: "PASS" | "FAIL"; decision: "RELEASE_ALLOWED" | "RELEASE_BLOCKED"; startedAt: string; durationMs: number; gates: GateResult[]; releaseSafety?: unknown };
 export type CommandGate = { name: string; group: string; command: string; args: string[]; blocking?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv; classification?: FailureClassification; skip?: string; blocked?: { reason: string; classification: FailureClassification } };
 
 export function fullReadinessDecision(input: { databaseError?: string; caExists: boolean; passwordLength: number; localSecretIgnored: boolean }) {
