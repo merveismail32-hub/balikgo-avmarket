@@ -1,11 +1,22 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
+import { readFileSync } from "node:fs";
 import { createGuardedTestPrisma } from "./guarded-test-prisma";
 import { processVerifiedPaymentEvent } from "../app/lib/payment-orchestrator";
 
-const password = process.env.QA_SHIPPING_PASSWORD ?? "";
+function testLocalSecret(name: string) {
+  try {
+    const line = readFileSync(".env.test.local", "utf8").split(/\r?\n/).find((value) => new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=`).test(value));
+    if (!line) return "";
+    const value = line.slice(line.indexOf("=") + 1).trim();
+    return (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")) ? value.slice(1, -1) : value;
+  } catch {
+    return "";
+  }
+}
+const password = process.env.QA_SHIPPING_PASSWORD ?? testLocalSecret("QA_SHIPPING_PASSWORD");
 const baseUrl = process.env.QA_BASE_URL ?? "http://localhost:3000";
-if (!password) throw new Error("QA runtime configuration is missing.");
+if (password.length < 8) throw new Error("QA runtime configuration is missing or does not meet Auth credentials policy.");
 const prisma = createGuardedTestPrisma();
 const prefix = "QA-SHIPPING-";
 const emailPrefix = "qa-shipping-";
