@@ -16,7 +16,7 @@ export function validateTestDatabaseEnvironment(env: TestEnvironment) {
 
 export function guardedTestConnectionOptions(env: TestEnvironment = { DATABASE_URL: process.env.DATABASE_URL, SUPABASE_CA_CERT_PATH: process.env.SUPABASE_CA_CERT_PATH }) {
   const safe = validateTestDatabaseEnvironment(env);
-  return { connectionString: safe.connectionString, ssl: { ca: readFileSync(safe.caPath, "utf8"), rejectUnauthorized: true as const } };
+  return { connectionString: safe.connectionString, ssl: { ca: readFileSync(safe.caPath, "utf8"), rejectUnauthorized: true as const }, max: 2 };
 }
 
 export function createGuardedTestPrisma(env: TestEnvironment = { DATABASE_URL: process.env.DATABASE_URL, SUPABASE_CA_CERT_PATH: process.env.SUPABASE_CA_CERT_PATH }) {

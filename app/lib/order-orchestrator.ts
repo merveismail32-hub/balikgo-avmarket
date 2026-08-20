@@ -111,6 +111,7 @@ export async function requestOrderItemReturn(tx: Prisma.TransactionClient, input
   const payment = item.order.payment;
   if (!payment) throw new Error("PAYMENT_NOT_FOUND");
   if (payment.status !== "PAID" && payment.status !== "PARTIAL_REFUND_PENDING" && payment.status !== "REFUND_PENDING") throw new Error("PAYMENT_NOT_PAID");
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`return:${item.id}`}, 0))`;
 
   const refund = await tx.refund.upsert({
     where: { idempotencyKey: `return:${item.id}` },
