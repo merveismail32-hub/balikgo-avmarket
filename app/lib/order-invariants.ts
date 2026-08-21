@@ -17,8 +17,10 @@ export function pendingRefundPaymentStatus(refundTotal: Prisma.Decimal, paymentA
 }
 
 export function isPayoutEligible(input: { paymentStatus: PaymentStatus; itemStatus: OrderStatus; hasOpenRefund: boolean }) {
-  return input.paymentStatus === "PAID" && (input.itemStatus === "DELIVERED" || input.itemStatus === "COMPLETED") && !input.hasOpenRefund;
+  return isPaymentEligibleForFulfillment(input.paymentStatus) && (input.itemStatus === "DELIVERED" || input.itemStatus === "COMPLETED") && !input.hasOpenRefund;
 }
+
+export function isPaymentEligibleForFulfillment(status: PaymentStatus) { return status === "PAID" || status === "PARTIAL_REFUND_PENDING"; }
 
 export function cancellationLedgerReversals(input: { sellerId: string; orderItemId: string; payoutId?: string | null; refundId?: string | null; grossAmount: Prisma.Decimal; commissionAmount: Prisma.Decimal; dedupePrefix?: string }) {
   const prefix = input.dedupePrefix ?? "cancel";

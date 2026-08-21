@@ -54,6 +54,7 @@ const gates: CommandGate[] = [
   command("operation-guards", "SECURITY", nodeStrip("scripts/verify-operation-guards.ts"), 30_000, "SECURITY_FAILURE"),
   command("transaction-guardian", "TRANSACTION_SAFETY", nodeStrip("scripts/verify-transaction-guardian.ts"), 30_000),
   command("cancellation-orchestration", "TRANSACTION_SAFETY", nodeStrip("scripts/verify-cancellation-orchestration-v1.ts"), 30_000),
+  command("order-orchestrator-hardening", "ORDER_SAFETY", nodeTs("scripts/verify-order-orchestrator-hardening-v1.ts"), 30_000),
   command("stock-truth", "INVENTORY_SAFETY", nodeStrip("scripts/verify-stock-truth.ts"), 30_000),
   command("stock-reservation", "INVENTORY_SAFETY", nodeStrip("scripts/verify-stock-reservation.ts"), 30_000),
   command("buybox", "ORDER_SAFETY", nodeStrip("scripts/verify-buybox.ts"), 30_000),
@@ -79,6 +80,7 @@ async function main() {
       command("stock-reservation-db", "INVENTORY_SAFETY", nodeTs("scripts/test-stock-reservation-db-e2e.ts", true), 600_000),
       command("finance-invariants", "TRANSACTION_SAFETY", nodeTs("scripts/verify-finance-invariants.ts", true), 180_000),
       command("order-state-machine", "ORDER_SAFETY", nodeTs("scripts/verify-order-state-machine.ts", true), 300_000),
+      command("payment-expiry-db", "TRANSACTION_SAFETY", nodeTs("scripts/test-payment-expiry-db-e2e.ts", true), 300_000),
     ];
     for (const gate of fullGates) { if (!fullReady) gate.skip = "FULL_ENVIRONMENT_NOT_READY"; const result = await runCommandGate(gate, { cwd: root, secrets }); results.push(result); console.log(`${result.status.padEnd(7)} ${result.group}/${result.name} (${result.durationMs}ms)`); }
     const runtimeResults = await runtimeGates(password, fullReady); for (const runtime of runtimeResults) { results.push(runtime); console.log(`${runtime.status.padEnd(7)} ${runtime.group}/${runtime.name} (${runtime.durationMs}ms)`); }

@@ -9,6 +9,7 @@
     "release:guard": "node --env-file=.env --experimental-strip-types scripts/run-release-guard.ts",
     "test:release-guard": "node --experimental-strip-types scripts/verify-release-guard.ts",
     "test:release-safety": "node --conditions=react-server --import tsx scripts/verify-release-safety.ts",
+    "test:order-orchestrator-hardening": "node --conditions=react-server --import tsx scripts/verify-order-orchestrator-hardening-v1.ts",
     "lint": "eslint",
     "make-admin": "tsx scripts/make-admin.ts",
     "test:order-state-machine": "tsx scripts/verify-order-state-machine.ts",

@@ -2,27 +2,21 @@ import "server-only";
 
 import { Prisma, type OrderStatus } from "@prisma/client";
 import { enqueueNotifications, type NotificationDraft } from "./notifications";
-import { aggregateOrderStatus, cancellationLedgerReversals, pendingRefundPaymentStatus } from "./order-invariants";
+import { cancellationLedgerReversals, isPaymentEligibleForFulfillment, pendingRefundPaymentStatus } from "./order-invariants";
 import { releaseOrderItemReservation } from "./stock-reservation";
 import { evaluateCancellationEligibility, isPreHandoffShipmentStatus } from "./cancellation-eligibility";
+import { reconcileOrderAggregate } from "./order-reconciliation";
 
 type CancellationActor = { kind: "CUSTOMER"; userId: string } | { kind: "SELLER"; userId: string; sellerId: string };
 
 export async function assertPaymentPaidForFulfillment(tx: Prisma.TransactionClient, orderId: string) {
   const payment = await tx.payment.findUnique({ where: { orderId }, select: { status: true } });
-  if (payment?.status !== "PAID") throw new Error("PAYMENT_NOT_PAID");
-}
-
-async function refreshAggregateOrderStatus(tx: Prisma.TransactionClient, orderId: string) {
-  const items = await tx.orderItem.findMany({ where: { orderId }, select: { status: true } });
-  const status = aggregateOrderStatus(items.map((item) => item.status));
-  await tx.order.update({ where: { id: orderId }, data: { status } });
-  return status;
+  if (!payment || !isPaymentEligibleForFulfillment(payment.status)) throw new Error("PAYMENT_NOT_PAID");
 }
 
 export async function reconcileOrderPayouts(tx: Prisma.TransactionClient, orderId: string) {
   const payment = await tx.payment.findUnique({ where: { orderId }, select: { status: true } });
-  if (payment?.status !== "PAID") return 0;
+  if (!payment || !isPaymentEligibleForFulfillment(payment.status)) return 0;
   const changed = await tx.sellerPayout.updateMany({
     where: { orderId, status: "PENDING", orderItem: { status: { in: ["DELIVERED", "COMPLETED"] }, refunds: { none: { status: { in: ["REQUESTED", "APPROVED", "PROCESSING", "COMPLETED"] } } } } },
     data: { status: "AVAILABLE", availableAt: new Date() },
@@ -120,7 +114,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
     ? { sellerId: item.sellerId, orderId: item.orderId, type: "ORDER_CANCELLED", dedupeKey: `cancel:${item.id}:seller`, title: "Sipariş kalemi iptal edildi", message: `${item.order.orderNumber} siparişindeki ${item.productName} müşteri tarafından iptal edildi.` }
     : { userId: item.order.userId, orderId: item.orderId, type: "ORDER_CANCELLED", dedupeKey: `cancel:${item.id}:customer`, title: "Sipariş kalemi iptal edildi", message: `${item.order.orderNumber} siparişindeki ${item.productName} satıcı tarafından iptal edildi.` };
   await enqueueNotifications(tx, [notification]);
-  await refreshAggregateOrderStatus(tx, item.orderId);
+  await reconcileOrderAggregate(tx, item.orderId);
   return { status: "CANCELLED" as const, idempotent: false, refundId };
 }
 
@@ -154,7 +148,7 @@ export async function requestOrderItemReturn(tx: Prisma.TransactionClient, input
   await synchronizePaymentRefundStatus(tx, payment.id);
   await tx.financialAuditEvent.create({ data: { paymentId: payment.id, refundId: refund.id, orderId: item.orderId, actorUserId: input.userId, entityType: "REFUND", entityId: refund.id, eventType: "RETURN_REQUESTED", toStatus: "REQUESTED", source: "CUSTOMER" } });
   await enqueueNotifications(tx, [{ sellerId: item.sellerId, orderId: item.orderId, type: "RETURN_REQUESTED", dedupeKey: `return-request:${refund.id}:seller`, title: "İade talebi", message: `${item.order.orderNumber} siparişindeki ${item.productName} için iade talebi oluşturuldu.` }]);
-  await refreshAggregateOrderStatus(tx, item.orderId);
+  await reconcileOrderAggregate(tx, item.orderId);
   return { status: "RETURN_REQUESTED" as const, idempotent: false };
 }
 
@@ -178,7 +172,7 @@ export async function decideRefund(tx: Prisma.TransactionClient, input: { refund
   }
   await synchronizePaymentRefundStatus(tx, refund.paymentId);
   if (target === "REJECTED") await reconcileOrderPayouts(tx, refund.orderId);
-  await refreshAggregateOrderStatus(tx, refund.orderId);
+  await reconcileOrderAggregate(tx, refund.orderId);
   await tx.financialAuditEvent.create({ data: { paymentId: refund.paymentId, refundId: refund.id, orderId: refund.orderId, actorUserId: input.actorUserId, entityType: "REFUND", entityId: refund.id, eventType: `REFUND_${target}`, fromStatus: refund.status, toStatus: target, source: "ADMIN" } });
   await enqueueNotifications(tx, [{ userId: refund.requestedByUserId ?? undefined, orderId: refund.orderId, type: `REFUND_${target}`, dedupeKey: `refund:${refund.id}:${target}:customer`, title: target === "APPROVED" ? "İade talebi onaylandı" : "İade talebi sonuçlandı", message: `${refund.order.orderNumber} numaralı siparişinizin iade talebi ${target === "APPROVED" ? "onaylandı; finansal iade henüz tamamlanmadı" : "reddedildi"}.` }, { sellerId: refund.sellerId, orderId: refund.orderId, type: `REFUND_${target}`, dedupeKey: `refund:${refund.id}:${target}:seller`, title: "İade talebi güncellendi", message: `${refund.order.orderNumber} siparişindeki iade talebi güncellendi.` }]);
   return { status: target, idempotent: false };
@@ -195,6 +189,6 @@ export async function transitionOrderItem(tx: Prisma.TransactionClient, input: {
   await tx.orderStatusHistory.create({ data: { orderItemId: item.id, changedByUserId: input.actorUserId, fromStatus: item.status, toStatus: input.target } });
   if (input.target === "DELIVERED") await reconcileOrderPayouts(tx, item.orderId);
   if (input.notification) await enqueueNotifications(tx, [input.notification]);
-  await refreshAggregateOrderStatus(tx, item.orderId);
+  await reconcileOrderAggregate(tx, item.orderId);
   return { status: input.target, idempotent: false };
 }

@@ -15,6 +15,7 @@ assert(paymentFirst && deliveryFirst && paymentFirst === deliveryFirst, "Payment
 assert(!isPayoutEligible({ paymentStatus: "PENDING", itemStatus: "DELIVERED", hasOpenRefund: false }), "Unpaid delivery released payout.");
 assert(!isPayoutEligible({ paymentStatus: "PAID", itemStatus: "SHIPPED", hasOpenRefund: false }), "Undelivered item released payout.");
 assert(!isPayoutEligible({ paymentStatus: "PAID", itemStatus: "DELIVERED", hasOpenRefund: true }), "Open refund released payout.");
+assert(isPayoutEligible({ paymentStatus: "PARTIAL_REFUND_PENDING", itemStatus: "DELIVERED", hasOpenRefund: false }), "Partial refund blocked unaffected seller payout.");
 
 assert(pendingRefundPaymentStatus(new Prisma.Decimal(1_000), new Prisma.Decimal(2_000)) === "PARTIAL_REFUND_PENDING", "Partial refund state failed.");
 assert(pendingRefundPaymentStatus(new Prisma.Decimal(2_000), new Prisma.Decimal(2_000)) === "REFUND_PENDING", "Full refund state failed.");

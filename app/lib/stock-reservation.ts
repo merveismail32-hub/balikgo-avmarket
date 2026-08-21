@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma, type StockReleaseReason } from "@prisma/client";
 import { releaseReservationStock } from "./stock-truth";
 import { cancellationLedgerReversals } from "./order-invariants";
+import { reconcileOrderAggregate } from "./order-reconciliation";
 
 export class StockReservationError extends Error {
   constructor(public readonly code: "RESERVATION_CONFLICT" | "RESERVATION_NOT_FOUND" | "PAYMENT_NOT_PAID") { super(code); }
@@ -60,6 +61,6 @@ export async function releaseOrderReservation(tx: Prisma.TransactionClient, inpu
     const removed = await tx.couponRedemption.deleteMany({ where: { id: payment.order.couponRedemption.id, orderId: payment.orderId } });
     if (removed.count) await tx.coupon.updateMany({ where: { id: payment.order.couponRedemption.couponId, usageCount: { gt: 0 } }, data: { usageCount: { decrement: 1 } } });
   }
-  await tx.order.update({ where: { id: payment.orderId }, data: { status: "CANCELLED" } });
+  await reconcileOrderAggregate(tx, payment.orderId);
   return payment.orderId;
 }
