@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { toCustomerOrderDto } from "../app/lib/customer-shipment-dto";
+import { carrierEventDecision } from "../app/lib/shipping";
 import type { CustomerOrderRecord } from "../app/lib/customer-order-select";
 
 const schema = readFileSync(new URL("../prisma/schema.prisma", import.meta.url), "utf8");
 const ingestion = readFileSync(new URL("../app/lib/shipment-event-ingestion.ts", import.meta.url), "utf8");
-const creation = readFileSync(new URL("../app/api/seller/shipments/route.ts", import.meta.url), "utf8");
+const creation = readFileSync(new URL("../app/lib/shipment-creation.ts", import.meta.url), "utf8");
+const creationRoute = readFileSync(new URL("../app/api/seller/shipments/route.ts", import.meta.url), "utf8");
+const transitionRoute = readFileSync(new URL("../app/api/seller/shipments/[id]/route.ts", import.meta.url), "utf8");
+const customerRoute = readFileSync(new URL("../app/api/orders/[id]/route.ts", import.meta.url), "utf8");
+const orchestrator = readFileSync(new URL("../app/lib/shipment-orchestrator.ts", import.meta.url), "utf8");
 const sellerPanel = readFileSync(new URL("../app/components/seller-shipment-panel.tsx", import.meta.url), "utf8");
 const sellerPage = readFileSync(new URL("../app/satici-panel/siparisler/[id]/page.tsx", import.meta.url), "utf8");
 const customerPanel = readFileSync(new URL("../app/components/customer-shipments.tsx", import.meta.url), "utf8");
@@ -13,8 +18,16 @@ assert.match(schema, /model ShipmentEvent[\s\S]*@@unique\(\[shipmentId, source, 
 assert.match(schema, /events\s+ShipmentEvent\[\]/, "Shipment event relation missing");
 assert.match(ingestion, /carrierEventDecision/, "out-of-order decision boundary missing");
 assert.match(ingestion, /carrierCode: source, trackingNumber: normalized\.trackingNumber/, "carrier/tracking ownership boundary missing");
+assert.match(ingestion, /PrismaClientKnownRequestError[\s\S]*P2002/, "concurrent carrier replay dedupe recovery missing");
+assert.match(creation, /FOR UPDATE/, "concurrent shipment creation order lock missing");
 assert.match(creation, /shipmentItems: \{ none: \{\} \}/, "split shipment overlap guard missing");
-assert.match(creation, /sellerId: seller\.id/, "split shipment seller ownership guard missing");
+assert.match(creation, /sellerId: input\.sellerId/, "split shipment seller ownership guard missing");
+assert.match(creation, /SHIPMENT_ELIGIBLE_ITEM_STATUSES/, "terminal item shipment eligibility guard missing");
+assert.match(creationRoute, /createSellerShipment/, "seller creation API bypasses centralized shipment policy");
+assert.match(transitionRoute, /sellerId: seller\.id/, "seller transition ownership boundary missing");
+assert.match(customerRoute, /\{ id, userId: session\.user\.id \}/, "customer order IDOR boundary missing");
+assert.match(orchestrator, /updateMany\(\{ where: \{ id: input\.shipmentId, sellerId: input\.sellerId, status: shipment\.status \}/, "shipment transition CAS boundary missing");
+assert.match(orchestrator, /dedupeKey: `shipment:\$\{input\.shipmentId\}:\$\{target\}:customer`/, "shipment notification dedupe boundary missing");
 assert.match(sellerPanel, /orderItemIds: chosen\.map/, "seller split item selection is not wired to API");
 assert.match(sellerPanel, /CARRIERS\.map/, "carrier whitelist is not used by seller UI");
 assert.match(sellerPanel, /validateTrackingNumber/, "seller tracking UX validation missing");
@@ -24,6 +37,13 @@ assert.match(sellerPanel, /body\.idempotent/, "duplicate action success UX missi
 assert.match(sellerPage, /events: \{ where: \{ applied: true \}/, "seller safe timeline projection missing");
 assert.match(customerPanel, /canonicalShipmentStatus/, "customer canonical status projection missing");
 assert.match(customerPanel, /rel="noopener noreferrer"/, "customer tracking link hardening missing");
+
+const deliveredAt = new Date("2026-08-20T12:00:00Z");
+assert.deepEqual(carrierEventDecision("OUT_FOR_DELIVERY", "DELIVERED", deliveredAt), { apply: true, stale: false, equivalent: false });
+assert.deepEqual(carrierEventDecision("DELIVERED", "IN_TRANSIT", new Date("2026-08-20T11:00:00Z"), deliveredAt), { apply: false, stale: true, equivalent: false });
+assert.deepEqual(carrierEventDecision("DELIVERED", "DELIVERED", deliveredAt, deliveredAt), { apply: false, stale: false, equivalent: true });
+assert.deepEqual(carrierEventDecision("CANCELLED", "HANDED_TO_CARRIER", deliveredAt), { apply: false, stale: true, equivalent: false });
+assert.deepEqual(carrierEventDecision("RETURNED", "IN_TRANSIT", deliveredAt), { apply: false, stale: true, equivalent: false });
 
 const eventTime = new Date("2026-08-20T12:00:00Z");
 const order = {

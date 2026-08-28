@@ -1,8 +1,11 @@
 import type { MetadataRoute } from "next";
+import { connection } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { publicCatalogPolicy } from "@/app/lib/catalog-data";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  // Public catalog membership changes without a deploy; do not freeze discovery URLs at build time.
+  await connection();
   const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   const [products, categories, brands, stores] = await Promise.all([
     prisma.catalogProduct.findMany({ where: publicCatalogPolicy, select: { slug: true, updatedAt: true } }),

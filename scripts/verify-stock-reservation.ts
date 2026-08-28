@@ -10,6 +10,7 @@ const payment = read("../app/lib/payment-orchestrator.ts");
 const cancellation = read("../app/lib/order-orchestrator.ts");
 const sellerOrder = read("../app/api/seller/orders/[id]/route.ts");
 const shipmentCreate = read("../app/api/seller/shipments/route.ts");
+const shipmentCreationPolicy = read("../app/lib/shipment-creation.ts");
 const shipment = read("../app/lib/shipment-orchestrator.ts");
 
 assert.match(schema, /stockReservationState\s+StockReservationState\?/);
@@ -26,7 +27,8 @@ assert.match(payment, /releaseOrderReservation/);
 assert.match(payment, /LATE_PAYMENT_REVIEW_REQUIRED/);
 assert.match(cancellation, /releaseOrderItemReservation/);
 assert(!/restoreCancellation/.test(cancellation));
-for (const source of [sellerOrder, shipmentCreate, shipment]) assert.match(source, /assertPaymentPaidForFulfillment/);
+for (const source of [sellerOrder, shipmentCreationPolicy, shipment]) assert.match(source, /assertPaymentPaidForFulfillment/);
+assert.match(shipmentCreate, /createSellerShipment/);
 assert.match(reservation, /dedupePrefix: "reservation-release"/);
 assert.match(reservation, /couponRedemption\.deleteMany/);
 console.log("PASS: Phase 2 reservation lifecycle, canonical release, compensation and fulfillment gates verified.");
