@@ -53,6 +53,7 @@ const gates: CommandGate[] = [
   command("db-guard", "SECURITY", nodeStrip("scripts/verify-test-db-guard.ts"), 30_000, "SECURITY_FAILURE"),
   command("operation-guards", "SECURITY", nodeStrip("scripts/verify-operation-guards.ts"), 30_000, "SECURITY_FAILURE"),
   command("transaction-guardian", "TRANSACTION_SAFETY", nodeStrip("scripts/verify-transaction-guardian.ts"), 30_000),
+  command("payment-orchestration", "TRANSACTION_SAFETY", nodeTs("scripts/verify-payment-orchestration.ts"), 30_000),
   command("cancellation-orchestration", "TRANSACTION_SAFETY", nodeStrip("scripts/verify-cancellation-orchestration-v1.ts"), 30_000),
   command("order-orchestrator-hardening", "ORDER_SAFETY", nodeTs("scripts/verify-order-orchestrator-hardening-v1.ts"), 30_000),
   command("stock-truth", "INVENTORY_SAFETY", nodeStrip("scripts/verify-stock-truth.ts"), 30_000),

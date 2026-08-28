@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { guardedTestConnectionOptions, TEST_DB_IDENTITY } from "./guarded-test-prisma";
-import { processVerifiedPaymentEvent } from "../app/lib/payment-orchestrator";
+import { processPaymentCallback, processVerifiedPaymentEvent } from "../app/lib/payment-orchestrator";
 import { assertPaymentPaidForFulfillment, cancelOrderItem } from "../app/lib/order-orchestrator";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg(guardedTestConnectionOptions()), transactionOptions: { maxWait: 60_000, timeout: 120_000 } });
@@ -23,6 +23,79 @@ async function fixture(input: { items?: number; coupon?: boolean } = {}) {
   return {customer,sellerUser,order,payment,coupon};
 }
 const event=(payment:{id:string;amount:Prisma.Decimal},type:"PAYMENT_PAID"|"PAYMENT_FAILED",id=randomUUID())=>({provider:"TEST",event:{eventId:`reservation-${id}`,paymentId:payment.id,eventType:type,amount:payment.amount.toString(),currency:"TRY" as const},payloadHash:"reservation-e2e"});
+
+async function verifyPaymentCallbacks() {
+  const paid = await fixture();
+  // An opaque provider verifies that the domain does not depend on the test adapter's name.
+  await prisma.payment.update({ where: { id: paid.payment.id }, data: { provider: "QA_GATEWAY" } });
+  const success = { ...event(paid.payment, "PAYMENT_PAID"), provider: "QA_GATEWAY" };
+  const snapshot = async () => JSON.stringify(await Promise.all([
+    prisma.payment.findUniqueOrThrow({ where: { id: paid.payment.id } }),
+    prisma.orderItem.findMany({ where: { orderId: paid.order.id }, orderBy: { id: "asc" } }),
+    prisma.sellerPayout.findMany({ where: { orderId: paid.order.id }, orderBy: { id: "asc" } }),
+    prisma.financialLedgerEntry.count({ where: { orderItem: { orderId: paid.order.id } } }),
+    prisma.stockMovement.count({ where: { orderId: paid.order.id } }),
+    prisma.notification.count({ where: { orderId: paid.order.id } }),
+    prisma.paymentEvent.count({ where: { paymentId: paid.payment.id } }),
+    prisma.financialAuditEvent.count({ where: { paymentId: paid.payment.id } }),
+  ]));
+  const raced = await Promise.all([processPaymentCallback(prisma, success), processPaymentCallback(prisma, success)]);
+  assert(raced.filter(result => result.duplicate).length === 1, "CALLBACK_CONCURRENT_DUPLICATE_NOT_IDEMPOTENT");
+  const before = await snapshot();
+  assert((await processPaymentCallback(prisma, success)).duplicate, "CALLBACK_SEQUENTIAL_REPLAY_FAILED");
+  assert(await snapshot() === before, "CALLBACK_REPLAY_CHANGED_BUSINESS_STATE");
+  for (const invalid of [
+    { ...success, event: { ...success.event, eventType: "PAYMENT_FAILED" as const } },
+    { ...success, event: { ...success.event, amount: "1" } },
+    { ...success, provider: "OTHER_GATEWAY" },
+  ]) {
+    await processPaymentCallback(prisma, invalid).then(() => { throw new Error("INVALID_CALLBACK_ACCEPTED"); }, error => {
+      assert(error instanceof Error && ["PAYMENT_EVENT_CONFLICT", "AMOUNT_MISMATCH", "PAYMENT_MISMATCH"].includes(error.message), "CALLBACK_WRONG_REJECTION");
+    });
+  }
+  assert(await snapshot() === before, "INVALID_CALLBACK_LEFT_PARTIAL_EFFECTS");
+  const conflict = { ...success, event: { ...success.event, eventId: `conflict-${randomUUID()}`, eventType: "PAYMENT_FAILED" as const } };
+  const conflicts = await Promise.all([processPaymentCallback(prisma, conflict), processPaymentCallback(prisma, { ...conflict, event: { ...conflict.event, eventId: `conflict-${randomUUID()}` } })]);
+  assert(conflicts.every(result => result.reconciliationRequired), "CONFLICTING_CALLBACK_NOT_HANDED_OFF");
+  assert(await prisma.paymentReconciliationReview.count({ where: { paymentId: paid.payment.id, reason: "PAYMENT_STOCK_STATE_MISMATCH", status: "PENDING" } }) === 1, "CONFLICTING_CALLBACK_DUPLICATED_REVIEW");
+  assert((await prisma.payment.findUniqueOrThrow({ where: { id: paid.payment.id } })).status === "PAID", "CONFLICTING_FAILURE_CHANGED_PAID");
+  assert((await prisma.orderItem.findMany({ where: { orderId: paid.order.id } })).every(item => item.stockReservationState === "CONSUMED" && item.stockReservationVersion === 1), "REPLAY_CONSUMED_RESERVATION_TWICE");
+  assert(await prisma.stockMovement.count({ where: { orderId: paid.order.id } }) === 0, "CONFLICTING_FAILURE_RELEASED_STOCK");
+
+  const failed = await fixture();
+  const failure = event(failed.payment, "PAYMENT_FAILED");
+  const failedRace = await Promise.all([processPaymentCallback(prisma, failure), processPaymentCallback(prisma, failure)]);
+  assert(failedRace.filter(result => result.duplicate).length === 1, "DUPLICATE_FAILED_CALLBACK_FAILED");
+  assert(await prisma.stockMovement.count({ where: { orderId: failed.order.id } }) === 1, "DUPLICATE_FAILED_CALLBACK_RELEASED_TWICE");
+  const late = event(failed.payment, "PAYMENT_PAID");
+  const lateRace = await Promise.all([processPaymentCallback(prisma, late), processPaymentCallback(prisma, event(failed.payment, "PAYMENT_PAID"))]);
+  assert(lateRace.every(result => result.latePaymentReviewRequired), "SUCCESS_AFTER_FAILURE_NOT_QUARANTINED");
+  assert(await prisma.paymentReconciliationReview.count({ where: { paymentId: failed.payment.id, reason: "LATE_PAYMENT_SUCCESS", status: "PENDING" } }) === 1, "LATE_SUCCESS_DUPLICATED_REVIEW");
+  assert((await prisma.payment.findUniqueOrThrow({ where: { id: failed.payment.id } })).status === "FAILED", "LATE_SUCCESS_REVIVED_FAILED");
+  await prisma.payment.update({ where: { id: failed.payment.id }, data: { provider: "QA_GATEWAY" } });
+  await processPaymentCallback(prisma, { ...success, event: { ...success.event, paymentId: failed.payment.id } }).then(() => { throw new Error("CROSS_PAYMENT_EVENT_ACCEPTED"); }, error => {
+    assert(error instanceof Error && error.message === "PAYMENT_EVENT_CONFLICT", "CROSS_PAYMENT_EVENT_WRONG_REJECTION");
+  });
+  await prisma.payment.update({ where: { id: failed.payment.id }, data: { status: "CANCELLED" } });
+  const cancelled = await processPaymentCallback(prisma, { ...event(failed.payment, "PAYMENT_PAID"), provider: "QA_GATEWAY" });
+  assert(cancelled.latePaymentReviewRequired && (await prisma.payment.findUniqueOrThrow({ where: { id: failed.payment.id } })).status === "CANCELLED", "CANCELLED_PAYMENT_REVIVED");
+  console.log("PASS: payment callbacks preserve provider isolation, concurrent success/failure replay and reconciliation handoff");
+}
+
+async function verifyPaymentRetry() {
+  const pending = await fixture({ items: 2 });
+  const input = event(pending.payment, "PAYMENT_PAID");
+  const failure = new Error("FORCED_CALLBACK_ROLLBACK");
+  await prisma.$transaction(async tx => { await processVerifiedPaymentEvent(tx, input); throw failure; }).then(() => { throw new Error("ROLLBACK_NOT_FORCED"); }, error => assert(error === failure, "UNEXPECTED_CALLBACK_ROLLBACK"));
+  assert((await prisma.payment.findUniqueOrThrow({ where: { id: pending.payment.id } })).status === "PENDING", "CALLBACK_ROLLBACK_CHANGED_PAYMENT");
+  assert(await prisma.paymentEvent.count({ where: { paymentId: pending.payment.id } }) === 0 && await prisma.notification.count({ where: { orderId: pending.order.id } }) === 0, "CALLBACK_ROLLBACK_LEFT_EVENTS");
+  assert((await prisma.orderItem.findMany({ where: { orderId: pending.order.id } })).every(item => item.stockReservationState === "RESERVED" && item.stockReservationVersion === 0), "CALLBACK_ROLLBACK_CONSUMED_STOCK");
+  await processPaymentCallback(prisma, input);
+  assert((await processPaymentCallback(prisma, input)).duplicate, "CALLBACK_RETRY_NOT_IDEMPOTENT");
+  assert((await prisma.payment.findUniqueOrThrow({ where: { id: pending.payment.id } })).status === "PAID" && await prisma.paymentEvent.count({ where: { paymentId: pending.payment.id } }) === 1, "CALLBACK_RETRY_DID_NOT_CONVERGE");
+  assert((await prisma.orderItem.findMany({ where: { orderId: pending.order.id } })).every(item => item.stockReservationState === "CONSUMED" && item.stockReservationVersion === 1), "CALLBACK_RETRY_CONSUMED_TWICE");
+  console.log("PASS: complete callback rollback and same-event retry leave exactly one payment/stock effect");
+}
 async function cleanup(){
   const [reviews,movements,notifications,audits,ledger,payouts,events,redemptions]=await Promise.all([
     prisma.paymentReconciliationReview.findMany({where:{paymentId:{in:all.payments}},select:{id:true}}),prisma.stockMovement.findMany({where:{sellerOfferId:{in:all.offers}},select:{id:true}}),prisma.notification.findMany({where:{orderId:{in:all.orders}},select:{id:true}}),prisma.financialAuditEvent.findMany({where:{orderId:{in:all.orders}},select:{id:true}}),prisma.financialLedgerEntry.findMany({where:{orderItem:{orderId:{in:all.orders}}},select:{id:true}}),prisma.sellerPayout.findMany({where:{orderId:{in:all.orders}},select:{id:true}}),prisma.paymentEvent.findMany({where:{paymentId:{in:all.payments}},select:{id:true}}),prisma.couponRedemption.findMany({where:{orderId:{in:all.orders}},select:{id:true}}),
@@ -42,5 +115,7 @@ async function main(){const identity=await prisma.$queryRaw<Array<{database:stri
   const terminalRace=await fixture();await Promise.allSettled([prisma.$transaction(tx=>processVerifiedPaymentEvent(tx,event(terminalRace.payment,"PAYMENT_PAID"))),prisma.$transaction(tx=>processVerifiedPaymentEvent(tx,event(terminalRace.payment,"PAYMENT_FAILED")))]);const terminal=await prisma.payment.findUniqueOrThrow({where:{id:terminalRace.payment.id}});const terminalItems=await prisma.orderItem.findMany({where:{orderId:terminalRace.order.id}});const terminalMovements=await prisma.stockMovement.count({where:{orderId:terminalRace.order.id}});assert((terminal.status==="PAID"&&terminalItems.every(x=>x.stockReservationState==="CONSUMED")&&terminalMovements===0)||(terminal.status==="FAILED"&&terminalItems.every(x=>x.stockReservationState==="RELEASED")&&terminalMovements===1),"PAID_FAILED_RACE_INCONSISTENT");
   const rollback=await fixture({items:2});await prisma.orderItem.update({where:{id:rollback.order.items[1].id},data:{quantity:0}});await prisma.$transaction(tx=>processVerifiedPaymentEvent(tx,event(rollback.payment,"PAYMENT_FAILED"))).then(()=>{throw new Error("MULTI_ITEM_FAILURE_ACCEPTED")},()=>undefined);const rollbackPayment=await prisma.payment.findUniqueOrThrow({where:{id:rollback.payment.id}});const rollbackItems=await prisma.orderItem.findMany({where:{orderId:rollback.order.id}});assert(rollbackPayment.status==="PENDING"&&rollbackItems.every(x=>x.stockReservationState==="RESERVED")&&await prisma.stockMovement.count({where:{orderId:rollback.order.id}})===0,"MULTI_ITEM_ROLLBACK_FAILED");
   const missing=await fixture();await prisma.payment.delete({where:{id:missing.payment.id}});await prisma.$transaction(tx=>assertPaymentPaidForFulfillment(tx,missing.order.id)).then(()=>{throw new Error("MISSING_PAYMENT_FULFILLMENT_ACCEPTED")},e=>assert(e instanceof Error&&e.message==="PAYMENT_NOT_PAID","MISSING_PAYMENT_GATE_WRONG"));
+  await verifyPaymentCallbacks();
+  await verifyPaymentRetry();
   console.log("PASS: Phase 2 guarded DB reservation consume/release, races, compensation, late payment and fulfillment gate verified.");}
 main().finally(async()=>{await cleanup();await prisma.$disconnect()});

@@ -26,7 +26,7 @@ assert.match(route, /runtime = "nodejs"/);
 assert.match(route, /Cache-Control.*no-store/);
 assert(!/request\.(?:json|text)|searchParams/.test(route));
 assert.match(payment, /createOrGetPaymentReconciliationReview/);
-assert.match(payment, /\["FAILED", "EXPIRED"\]/);
+assert.match(payment, /\["FAILED", "EXPIRED", "CANCELLED"\]/);
 assert(!/cron/i.test(deployment));
 
 const secret = "s".repeat(MIN_INTERNAL_CRON_SECRET_LENGTH);
