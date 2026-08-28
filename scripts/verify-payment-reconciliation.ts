@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { Prisma } from "@prisma/client";
+import { classifyPaymentMismatch } from "../app/lib/payment-reconciliation-service";
+type InternalStatus = "PENDING" | "FAILED" | "EXPIRED" | "PAID";
+const payment = (status: InternalStatus, reservation = "RESERVED") => ({ status, amount: new Prisma.Decimal("100.00"), currency: "TRY", provider: "OPAQUE", providerPaymentId: "tx-1", orderId: "order-1", order: { items: [{ stockReservationState: reservation }] } });
+assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "SUCCEEDED" }).decision, "REPLAY_ORCHESTRATION");
+assert.equal(classifyPaymentMismatch(payment("FAILED", "RELEASED"), { status: "SUCCEEDED" }).category, "PROVIDER_SUCCESS_INTERNAL_FAILED");
+assert.equal(classifyPaymentMismatch(payment("EXPIRED", "RELEASED"), { status: "SUCCEEDED" }).category, "PROVIDER_SUCCESS_INTERNAL_EXPIRED");
+assert.equal(classifyPaymentMismatch(payment("PAID"), { status: "FAILED" }).category, "INTERNAL_PAID_PROVIDER_FAILED");
+assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "SUCCEEDED", amount: "99.00" }).category, "AMOUNT_MISMATCH");
+assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "SUCCEEDED", currency: "USD" }).category, "CURRENCY_MISMATCH");
+assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "UNKNOWN" }).category, "UNKNOWN_PROVIDER_STATE");
+assert.equal(classifyPaymentMismatch(payment("PENDING", "RELEASED"), { status: "SUCCEEDED" }).decision, "REQUIRE_MANUAL_REVIEW");
+console.log("PASS: payment reconciliation taxonomy separates safe replay candidates from manual-review mismatches");

@@ -4,8 +4,11 @@ import { createHash } from "node:crypto";
 import { Prisma, type PaymentReconciliationPriority, type PaymentReconciliationReason, type PaymentStatus } from "@prisma/client";
 import { enqueueNotifications } from "./notifications";
 
-export function paymentReconciliationFingerprint(input: { paymentId: string; reason: PaymentReconciliationReason; terminalStatus: PaymentStatus }) {
-  return createHash("sha256").update(JSON.stringify(["payment-reconciliation:v1", input.paymentId, input.reason, input.terminalStatus])).digest("hex");
+export function paymentReconciliationFingerprint(input: { paymentId: string; reason: PaymentReconciliationReason; terminalStatus: PaymentStatus; mismatchCategory?: string }) {
+  const identity = input.mismatchCategory
+    ? ["payment-reconciliation:v2", input.paymentId, input.reason, input.terminalStatus, input.mismatchCategory]
+    : ["payment-reconciliation:v1", input.paymentId, input.reason, input.terminalStatus];
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
 }
 
 const select = { id: true, paymentId: true, reason: true, terminalStatus: true, status: true, priority: true, fingerprint: true, openFingerprint: true } as const;
@@ -14,7 +17,7 @@ function isOpenFingerprintConflict(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && JSON.stringify(error.meta ?? "").includes("openFingerprint");
 }
 
-export async function createOrGetPaymentReconciliationReview(tx: Prisma.TransactionClient, input: { paymentId: string; paymentEventId?: string; reason: PaymentReconciliationReason; terminalStatus: PaymentStatus; priority?: PaymentReconciliationPriority; metadata?: Prisma.InputJsonValue }) {
+export async function createOrGetPaymentReconciliationReview(tx: Prisma.TransactionClient, input: { paymentId: string; paymentEventId?: string; reason: PaymentReconciliationReason; terminalStatus: PaymentStatus; mismatchCategory?: string; priority?: PaymentReconciliationPriority; metadata?: Prisma.InputJsonValue }) {
   const fingerprint = paymentReconciliationFingerprint(input);
   const existing = await tx.paymentReconciliationReview.findUnique({ where: { openFingerprint: fingerprint }, select });
   if (existing) return { review: existing, created: false };

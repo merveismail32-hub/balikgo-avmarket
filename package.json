@@ -39,6 +39,7 @@
     "test:stock-reservation-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-stock-reservation-db-e2e.ts",
     "test:payment-expiry": "node --conditions=react-server --import tsx scripts/verify-payment-expiry.ts",
     "test:payment-orchestration": "node --conditions=react-server --import tsx scripts/verify-payment-orchestration.ts",
+    "test:payment-reconciliation": "node --conditions=react-server --import tsx scripts/verify-payment-reconciliation.ts",
     "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {
