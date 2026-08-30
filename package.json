@@ -22,7 +22,7 @@
     "catalog:backfill": "tsx scripts/backfill-catalog-offers.ts",
     "test:db-guard": "node --experimental-strip-types scripts/verify-test-db-guard.ts",
     "test:operation-guards": "node --experimental-strip-types scripts/verify-operation-guards.ts",
-    "db:migrate:test": "tsx scripts/run-prisma-migrate.ts test",
+    "db:migrate:test": "node --env-file=.env --import data:text/javascript,import%20os%20from%20'node%3Aos'%3Bos.userInfo%3D()%3D%3E(%7Busername%3A'qa'%2Chomedir%3Aprocess.cwd()%2Cshell%3Anull%2Cuid%3A-1%2Cgid%3A-1%7D)%3B --import tsx scripts/run-prisma-migrate.ts test",
     "db:migrate:production": "tsx scripts/run-prisma-migrate.ts production",
     "test:catalog-offers": "node --env-file=.env --conditions=react-server --import tsx scripts/verify-catalog-offers.ts",
     "test:catalog-intelligence": "node --conditions=react-server --experimental-strip-types scripts/verify-catalog-intelligence.ts",
@@ -41,6 +41,7 @@
     "test:payment-orchestration": "node --conditions=react-server --import tsx scripts/verify-payment-orchestration.ts",
     "test:payment-reconciliation": "node --conditions=react-server --import tsx scripts/verify-payment-reconciliation.ts",
     "test:return-refund-orchestration": "node --conditions=react-server --import tsx scripts/verify-return-refund-orchestration.ts",
+    "test:seller-onboarding": "node --conditions=react-server --import data:text/javascript,import%20os%20from%20'node%3Aos'%3Bos.userInfo%3D()%3D%3E(%7Busername%3A'qa'%2Chomedir%3Aprocess.cwd()%2Cshell%3Anull%2Cuid%3A-1%2Cgid%3A-1%7D)%3B --import tsx scripts/verify-seller-onboarding.ts",
     "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {

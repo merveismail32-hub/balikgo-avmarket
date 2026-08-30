@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { validateTestDatabaseEnvironment } from "./guarded-test-prisma.ts";
 import { getFeatureSafetySnapshot, loadFeatureSafetyConfig } from "../app/lib/feature-flags-core.ts";
 import { fullReadinessDecision, releaseDecision, runCommandGate, writeReport, type CommandGate, type FailureClassification, type GateResult } from "./release-guard-core.ts";
+import { hydrateVerifiedTestEnvironment } from "./local-test-environment.ts";
 
 const root = resolve(import.meta.dirname, "..");
 const profileArg = process.argv.find((value) => value.startsWith("--profile="))?.split("=", 2)[1] ?? "fast";
@@ -56,6 +57,7 @@ const gates: CommandGate[] = [
   command("payment-orchestration", "TRANSACTION_SAFETY", nodeTs("scripts/verify-payment-orchestration.ts"), 30_000),
   command("payment-reconciliation", "TRANSACTION_SAFETY", nodeTs("scripts/verify-payment-reconciliation.ts"), 30_000),
   command("return-refund-orchestration", "TRANSACTION_SAFETY", nodeTs("scripts/verify-return-refund-orchestration.ts"), 30_000),
+  command("seller-onboarding", "SELLER_SAFETY", nodeTs("scripts/verify-seller-onboarding.ts"), 30_000),
   command("cancellation-orchestration", "TRANSACTION_SAFETY", nodeStrip("scripts/verify-cancellation-orchestration-v1.ts"), 30_000),
   command("order-orchestrator-hardening", "ORDER_SAFETY", nodeTs("scripts/verify-order-orchestrator-hardening-v1.ts"), 30_000),
   command("stock-truth", "INVENTORY_SAFETY", nodeStrip("scripts/verify-stock-truth.ts"), 30_000),
@@ -71,12 +73,14 @@ const gates: CommandGate[] = [
 ];
 
 async function main() {
+  if (profile === "full") Object.assign(process.env, hydrateVerifiedTestEnvironment(process.env, root));
   const startedAt = new Date().toISOString(); const started = performance.now(); const password = process.env.QA_SHIPPING_PASSWORD ?? localSecret("QA_SHIPPING_PASSWORD"); const secrets = [password, process.env.DATABASE_URL ?? ""];
   const results: GateResult[] = [];
   for (const gate of gates) { const result = await runCommandGate(gate, { cwd: root, secrets }); results.push(result); console.log(`${result.status.padEnd(7)} ${result.group}/${result.name} (${result.durationMs}ms)`); if (result.reason && result.status !== "PASS") console.log(`         ${result.classification ?? ""}: ${result.reason}`); }
   let fullReady = false;
   if (profile === "full") {
     const precheck = await fullPrecheck(password); fullReady = precheck.ready; results.push(precheck.result); console.log(`${precheck.result.status.padEnd(7)} SECURITY/full-environment (${precheck.result.durationMs}ms)`);
+    if (fullReady) process.env.DATABASE_URL = validateTestDatabaseEnvironment({ DATABASE_URL: process.env.DATABASE_URL, SUPABASE_CA_CERT_PATH: process.env.SUPABASE_CA_CERT_PATH }).runtimeConnectionString;
     const fullGates = [
       command("transaction-guardian-db", "TRANSACTION_SAFETY", nodeTs("scripts/test-transaction-guardian-db-e2e.ts", true), 900_000),
       command("stock-truth-db", "INVENTORY_SAFETY", nodeTs("scripts/test-stock-truth-db-e2e.ts", true), 300_000),

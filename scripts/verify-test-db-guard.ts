@@ -1,10 +1,19 @@
 import { strict as assert } from "node:assert";
-import { TEST_DB_IDENTITY, validateTestDatabaseEnvironment } from "./guarded-test-prisma.ts";
+import { TEST_DB_IDENTITY, validateTestDatabaseEnvironment, verifiedTestMigrationConnectionString } from "./guarded-test-prisma.ts";
 
 const password = "not-a-secret";
 const valid = `postgresql://${encodeURIComponent(TEST_DB_IDENTITY.user)}:${password}@${TEST_DB_IDENTITY.host}:5432/postgres`;
 const rejects = (databaseUrl: string | undefined, ca = "local-ca.pem") => assert.throws(() => validateTestDatabaseEnvironment({ DATABASE_URL: databaseUrl, SUPABASE_CA_CERT_PATH: ca }), /REFUSING_|MISSING/);
 assert.doesNotThrow(() => validateTestDatabaseEnvironment({ DATABASE_URL: valid, SUPABASE_CA_CERT_PATH: "local-ca.pem" }));
+const urlWithRequire = `${valid}?sslmode=require&connect_timeout=10`;
+const normalized = new URL(validateTestDatabaseEnvironment({ DATABASE_URL: urlWithRequire, SUPABASE_CA_CERT_PATH: "local-ca.pem" }).runtimeConnectionString);
+assert.equal(normalized.searchParams.get("sslmode"), null);
+assert.equal(normalized.searchParams.get("connect_timeout"), "10");
+const direct = verifiedTestMigrationConnectionString({ TEST_SESSION_DATABASE_URL: valid, SUPABASE_CA_CERT_PATH: "local-ca.pem" });
+assert.equal(new URL(direct).searchParams.get("sslmode"), "require");
+assert.equal(new URL(direct).searchParams.get("sslcert"), "local-ca.pem");
+assert.equal(new URL(direct).searchParams.get("sslaccept"), "strict");
+assert.throws(() => verifiedTestMigrationConnectionString({ TEST_SESSION_DATABASE_URL: "postgresql://postgres.lkvzkscoworbudceknbo:password@aws-1-eu-west-1.pooler.supabase.com:5432/postgres", SUPABASE_CA_CERT_PATH: "local-ca.pem" }), /REFUSING_NON_TEST/);
 rejects(valid.replace(TEST_DB_IDENTITY.projectRef, "lkvzkscoworbudceknbo"));
 rejects(valid.replace(TEST_DB_IDENTITY.host, "db.example.invalid"));
 rejects(valid.replace(":5432/", ":6543/"));

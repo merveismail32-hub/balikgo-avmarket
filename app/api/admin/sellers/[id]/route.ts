@@ -1,3 +1,25 @@
-import { NextResponse } from "next/server";import{z}from"zod";import{auth}from"@/auth";import{prisma}from"@/app/lib/prisma";
-const schema=z.discriminatedUnion("action",[z.object({action:z.literal("APPROVE")}).strict(),z.object({action:z.enum(["REJECT","SUSPEND"]),reason:z.string().trim().min(2).max(500)}).strict()]);
-export async function PATCH(request:Request,{params}:{params:Promise<{id:string}>}){const session=await auth();if(!session?.user?.id)return NextResponse.json({error:"Oturum gerekli."},{status:401});if(session.user.role!=="ADMIN")return NextResponse.json({error:"Yönetici yetkisi gerekli."},{status:403});const parsed=schema.safeParse(await request.json().catch(()=>null));if(!parsed.success)return NextResponse.json({error:"Geçersiz mağaza işlemi."},{status:400});const{id}=await params;const seller=await prisma.sellerProfile.findUnique({where:{id},select:{status:true,userId:true}});if(!seller)return NextResponse.json({error:"Mağaza bulunamadı."},{status:404});const target=parsed.data.action==="APPROVE"?"APPROVED":parsed.data.action==="REJECT"?"REJECTED":"SUSPENDED";await prisma.$transaction([prisma.sellerProfile.update({where:{id},data:{status:target,rejectionReason:"reason" in parsed.data?parsed.data.reason:null}}),prisma.user.update({where:{id:seller.userId},data:{role:target==="REJECTED"?"CUSTOMER":"SELLER"}}),prisma.adminAuditLog.create({data:{actorUserId:session.user.id,action:`SELLER_${target}`,entityType:"SELLER",entityId:id,fromStatus:seller.status,toStatus:target,note:"reason" in parsed.data?parsed.data.reason:null}})]);return NextResponse.json({ok:true,status:target});}
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/auth";
+import { prisma } from "@/app/lib/prisma";
+
+const schema = z.discriminatedUnion("action", [z.object({ action: z.literal("APPROVE") }).strict(), z.object({ action: z.enum(["REJECT", "SUSPEND"]), reason: z.string().trim().min(2).max(500) }).strict()]);
+
+export async function PATCH(request: Request, { params }: RouteContext<"/api/admin/sellers/[id]">) {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "Oturum gerekli." }, { status: 401 });
+  if (session.user.role !== "ADMIN") return NextResponse.json({ error: "Yönetici yetkisi gerekli." }, { status: 403 });
+  const parsed = schema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "Geçersiz mağaza işlemi." }, { status: 400 });
+  const { id } = await params;
+  const seller = await prisma.sellerProfile.findUnique({ where: { id }, select: { status: true, userId: true, onboardingStatus: true, activationEligible: true } });
+  if (!seller) return NextResponse.json({ error: "Mağaza bulunamadı." }, { status: 404 });
+  if (parsed.data.action === "APPROVE" && (seller.onboardingStatus !== "APPROVED" || !seller.activationEligible)) return NextResponse.json({ error: "Operasyonel aktivasyon için KYB onayı ve uygunluk gereklidir." }, { status: 409 });
+  const target = parsed.data.action === "APPROVE" ? "APPROVED" : parsed.data.action === "REJECT" ? "REJECTED" : "SUSPENDED";
+  await prisma.$transaction([
+    prisma.sellerProfile.update({ where: { id }, data: { status: target, rejectionReason: "reason" in parsed.data ? parsed.data.reason : null } }),
+    prisma.user.update({ where: { id: seller.userId }, data: { role: target === "REJECTED" ? "CUSTOMER" : "SELLER" } }),
+    prisma.adminAuditLog.create({ data: { actorUserId: session.user.id, action: `SELLER_${target}`, entityType: "SELLER", entityId: id, fromStatus: seller.status, toStatus: target, note: "reason" in parsed.data ? parsed.data.reason : null } }),
+  ]);
+  return NextResponse.json({ ok: true, status: target });
+}

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { TEST_DB_IDENTITY, validateTestDatabaseEnvironment } from "./guarded-test-prisma.ts";
+import { TEST_DB_IDENTITY, validateTestDatabaseEnvironment, verifiedTestMigrationConnectionString } from "./guarded-test-prisma.ts";
 
 const PRODUCTION_REF = "lkvzkscoworbudceknbo";
 const PRODUCTION_CONFIRMATION = "I_ACKNOWLEDGE_BALIKGO_PRODUCTION_WRITE";
@@ -31,8 +31,9 @@ export function selectMigrationTarget(env: Record<string, string | undefined>, t
   rejectTlsBypass(env);
   if (target === "test") {
     if (env.DB_TARGET_PROJECT_REF !== TEST_DB_IDENTITY.projectRef) throw new Error("DB_TARGET_PROJECT_REF_MISMATCH");
-    const safe = validateTestDatabaseEnvironment({ DATABASE_URL: env.DATABASE_URL, SUPABASE_CA_CERT_PATH: env.SUPABASE_CA_CERT_PATH });
-    return { operationTarget: target, connectionString: safe.connectionString, actualRef: TEST_DB_IDENTITY.projectRef } as const;
+    validateTestDatabaseEnvironment({ DATABASE_URL: env.DATABASE_URL, SUPABASE_CA_CERT_PATH: env.SUPABASE_CA_CERT_PATH });
+    const connectionString = verifiedTestMigrationConnectionString({ TEST_SESSION_DATABASE_URL: env.TEST_SESSION_DATABASE_URL, SUPABASE_CA_CERT_PATH: env.SUPABASE_CA_CERT_PATH });
+    return { operationTarget: target, connectionString, actualRef: TEST_DB_IDENTITY.projectRef } as const;
   }
   if (target === "production") {
     const safe = validateOperationTarget(env, "write");
@@ -44,7 +45,7 @@ export function selectMigrationTarget(env: Record<string, string | undefined>, t
 
 export function migrationChildEnvironment(env: Record<string, string | undefined>, selected: ReturnType<typeof selectMigrationTarget>) {
   if (!env.SUPABASE_CA_CERT_PATH) throw new Error("SUPABASE_CA_CERT_PATH_MISSING");
-  return { ...env, DATABASE_URL: selected.connectionString, DIRECT_URL: selected.connectionString, NODE_EXTRA_CA_CERTS: env.SUPABASE_CA_CERT_PATH };
+  return { ...env, DATABASE_URL: selected.connectionString, DIRECT_URL: selected.connectionString, NODE_EXTRA_CA_CERTS: env.SUPABASE_CA_CERT_PATH, PGSSLROOTCERT: env.SUPABASE_CA_CERT_PATH, SSL_CERT_FILE: env.SUPABASE_CA_CERT_PATH };
 }
 
 export function createGuardedOperationPrisma(operation: string, access: "read" | "write") {

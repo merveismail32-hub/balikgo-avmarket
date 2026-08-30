@@ -19,6 +19,29 @@ enum SellerStatus {
   SUSPENDED
 }
 
+enum SellerOnboardingStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  NEEDS_REVISION
+  APPROVED
+  REJECTED
+}
+
+enum SellerKybDocumentType {
+  TAX_CERTIFICATE
+  TRADE_REGISTRY
+  IDENTITY_DOCUMENT
+  SIGNATURE_CIRCULAR
+  OTHER
+}
+
+enum SellerKybDocumentStatus {
+  PROVIDED
+  ACCEPTED
+  REJECTED
+}
+
 enum ProductModerationStatus {
   PENDING
   APPROVED
@@ -186,57 +209,79 @@ enum StockReleaseReason {
 }
 
 model User {
-  id                 String                @id @default(cuid())
-  name               String
-  surname            String
-  email              String                @unique
-  phone              String
-  passwordHash       String
-  role               UserRole              @default(CUSTOMER)
-  sellerProfile      SellerProfile?
-  cartItems          CartItem[]
-  favorites          Favorite[]
-  orders             Order[]
-  orderStatusChanges OrderStatusHistory[]
-  refundsRequested   Refund[]              @relation("RefundRequester")
-  financialAudits    FinancialAuditEvent[]
-  notifications      Notification[]
-  reviews            Review[]
-  couponRedemptions  CouponRedemption[]
-  adminAudits        AdminAuditLog[]
+  id                                   String                        @id @default(cuid())
+  name                                 String
+  surname                              String
+  email                                String                        @unique
+  phone                                String
+  passwordHash                         String
+  role                                 UserRole                      @default(CUSTOMER)
+  sellerProfile                        SellerProfile?
+  cartItems                            CartItem[]
+  favorites                            Favorite[]
+  orders                               Order[]
+  orderStatusChanges                   OrderStatusHistory[]
+  refundsRequested                     Refund[]                      @relation("RefundRequester")
+  financialAudits                      FinancialAuditEvent[]
+  notifications                        Notification[]
+  reviews                              Review[]
+  couponRedemptions                    CouponRedemption[]
+  adminAudits                          AdminAuditLog[]
+  sellerOnboardingEvents               SellerOnboardingEvent[]
+  sellerOnboardingReviews              SellerProfile[]               @relation("SellerOnboardingReviewer")
   paymentReconciliationReviewsResolved PaymentReconciliationReview[] @relation("PaymentReconciliationResolver")
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
+  createdAt                            DateTime                      @default(now())
+  updatedAt                            DateTime                      @updatedAt
 }
 
 model SellerProfile {
-  id                  String                 @id @default(cuid())
-  userId              String                 @unique
-  user                User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeName           String
-  storeSlug           String?                @unique
-  companyType         String
-  phone               String                 @default("")
-  taxNumber           String
-  taxOffice           String
-  city                String
-  address             String
-  description         String
-  categories          String                 @default("")
-  status              SellerStatus           @default(PENDING)
-  rejectionReason     String?                @db.VarChar(500)
-  products            Product[]
-  offers              SellerOffer[]
-  catalogMatchReviews CatalogMatchReview[]
-  orderItems          OrderItem[]
-  payouts             SellerPayout[]
-  refunds             Refund[]
-  notifications       Notification[]
-  coupons             Coupon[]
-  ledgerEntries       FinancialLedgerEntry[]
-  shipments           Shipment[]
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
+  id                      String                  @id @default(cuid())
+  userId                  String                  @unique
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeName               String
+  storeSlug               String?                 @unique
+  companyType             String
+  phone                   String                  @default("")
+  taxNumber               String
+  taxOffice               String
+  city                    String
+  address                 String
+  description             String
+  categories              String                  @default("")
+  status                  SellerStatus            @default(PENDING)
+  rejectionReason         String?                 @db.VarChar(500)
+  onboardingStatus        SellerOnboardingStatus  @default(DRAFT)
+  legalName               String                  @default("") @db.VarChar(191)
+  authorizedPersonName    String                  @default("") @db.VarChar(100)
+  authorizedPersonSurname String                  @default("") @db.VarChar(100)
+  authorizedPersonEmail   String                  @default("") @db.VarChar(191)
+  authorizedPersonTitle   String                  @default("") @db.VarChar(100)
+  termsAcceptedAt         DateTime?
+  submittedAt             DateTime?
+  reviewedAt              DateTime?
+  approvedAt              DateTime?
+  reviewerUserId          String?
+  reviewer                User?                   @relation("SellerOnboardingReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  revisionReason          String?                 @db.VarChar(500)
+  activationEligible      Boolean                 @default(false)
+  onboardingVersion       Int                     @default(0)
+  kybDocuments            SellerKybDocument[]
+  onboardingEvents        SellerOnboardingEvent[]
+  products                Product[]
+  offers                  SellerOffer[]
+  catalogMatchReviews     CatalogMatchReview[]
+  orderItems              OrderItem[]
+  payouts                 SellerPayout[]
+  refunds                 Refund[]
+  notifications           Notification[]
+  coupons                 Coupon[]
+  ledgerEntries           FinancialLedgerEntry[]
+  shipments               Shipment[]
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  @@index([onboardingStatus, createdAt])
+  @@index([reviewerUserId])
 }
 
 model Product {
@@ -334,31 +379,31 @@ model CatalogProduct {
 }
 
 model SellerOffer {
-  id               String              @id @default(cuid())
+  id               String               @id @default(cuid())
   sellerId         String
   catalogProductId String
-  legacyProductId  String?             @unique
-  sellerSku        String?             @db.VarChar(80)
-  price            Decimal             @db.Decimal(12, 2)
-  listPrice        Decimal?            @db.Decimal(12, 2)
-  stock            Int                 @default(0)
-  inventoryVersion Int                @default(0)
-  active           Boolean             @default(true)
-  handlingTimeDays Int                 @default(0)
-  source           String?             @db.VarChar(50)
-  externalSourceId String?             @db.VarChar(191)
+  legacyProductId  String?              @unique
+  sellerSku        String?              @db.VarChar(80)
+  price            Decimal              @db.Decimal(12, 2)
+  listPrice        Decimal?             @db.Decimal(12, 2)
+  stock            Int                  @default(0)
+  inventoryVersion Int                  @default(0)
+  active           Boolean              @default(true)
+  handlingTimeDays Int                  @default(0)
+  source           String?              @db.VarChar(50)
+  externalSourceId String?              @db.VarChar(191)
   matchStatus      CatalogMatchStatus?
-  matchReason      String?             @db.VarChar(100)
-  matchConfidence  Decimal?            @db.Decimal(5, 4)
-  seller           SellerProfile       @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct   CatalogProduct      @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
-  legacyProduct    Product?            @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
+  matchReason      String?              @db.VarChar(100)
+  matchConfidence  Decimal?             @db.Decimal(5, 4)
+  seller           SellerProfile        @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct   CatalogProduct       @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  legacyProduct    Product?             @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
   cartItems        CartItem[]
   orderItems       OrderItem[]
   matchReviews     CatalogMatchReview[]
   stockMovements   StockMovement[]
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@unique([sellerId, catalogProductId])
   @@unique([sellerId, sellerSku])
@@ -460,41 +505,41 @@ model Order {
 }
 
 model OrderItem {
-  id               String                 @id @default(cuid())
-  orderId          String
-  productId        String
-  sellerId         String
-  catalogProductId String?
-  sellerOfferId    String?
-  productName      String
-  productSku       String?                @db.VarChar(80)
-  productImageUrl  String
-  unitPrice        Decimal                @db.Decimal(12, 2)
-  quantity         Int
-  status           OrderStatus            @default(NEW)
-  shippingCompany  String?
-  trackingNumber   String?
-  commissionRate   Decimal?               @db.Decimal(5, 4)
-  commissionAmount Decimal?               @db.Decimal(12, 2)
-  sellerNetAmount  Decimal?               @db.Decimal(12, 2)
-  discountAmount   Decimal                @default(0) @db.Decimal(12, 2)
-  stockReservationState StockReservationState?
-  stockReservationReleasedAt DateTime?
+  id                            String                 @id @default(cuid())
+  orderId                       String
+  productId                     String
+  sellerId                      String
+  catalogProductId              String?
+  sellerOfferId                 String?
+  productName                   String
+  productSku                    String?                @db.VarChar(80)
+  productImageUrl               String
+  unitPrice                     Decimal                @db.Decimal(12, 2)
+  quantity                      Int
+  status                        OrderStatus            @default(NEW)
+  shippingCompany               String?
+  trackingNumber                String?
+  commissionRate                Decimal?               @db.Decimal(5, 4)
+  commissionAmount              Decimal?               @db.Decimal(12, 2)
+  sellerNetAmount               Decimal?               @db.Decimal(12, 2)
+  discountAmount                Decimal                @default(0) @db.Decimal(12, 2)
+  stockReservationState         StockReservationState?
+  stockReservationReleasedAt    DateTime?
   stockReservationReleaseReason StockReleaseReason?
-  stockReservationVersion Int             @default(0)
-  order            Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  statusHistory    OrderStatusHistory[]
-  payout           SellerPayout?
-  refunds          Refund[]
-  ledgerEntries    FinancialLedgerEntry[]
-  review           Review?
-  shipmentItems    ShipmentItem[]
-  product          Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
-  seller           SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct   CatalogProduct?        @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
-  sellerOffer      SellerOffer?           @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  stockReservationVersion       Int                    @default(0)
+  order                         Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  statusHistory                 OrderStatusHistory[]
+  payout                        SellerPayout?
+  refunds                       Refund[]
+  ledgerEntries                 FinancialLedgerEntry[]
+  review                        Review?
+  shipmentItems                 ShipmentItem[]
+  product                       Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
+  seller                        SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct                CatalogProduct?        @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
+  sellerOffer                   SellerOffer?           @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
+  createdAt                     DateTime               @default(now())
+  updatedAt                     DateTime               @updatedAt
 
   @@index([sellerId, createdAt])
   @@index([orderId])
@@ -504,23 +549,23 @@ model OrderItem {
 }
 
 model Shipment {
-  id                  String         @id @default(cuid())
+  id                  String          @id @default(cuid())
   orderId             String
   sellerId            String
-  status              ShipmentStatus @default(NOT_READY)
-  carrierCode         String?        @db.VarChar(40)
-  carrierName         String?        @db.VarChar(100)
-  trackingNumber      String?        @db.VarChar(80)
+  status              ShipmentStatus  @default(NOT_READY)
+  carrierCode         String?         @db.VarChar(40)
+  carrierName         String?         @db.VarChar(100)
+  trackingNumber      String?         @db.VarChar(80)
   preparedAt          DateTime?
   shippedAt           DateTime?
   deliveredAt         DateTime?
   cancelledAt         DateTime?
   estimatedDeliveryAt DateTime?
-  idempotencyKey      String?        @unique @db.VarChar(191)
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  seller              SellerProfile  @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  idempotencyKey      String?         @unique @db.VarChar(191)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  order               Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  seller              SellerProfile   @relation(fields: [sellerId], references: [id], onDelete: Restrict)
   items               ShipmentItem[]
   events              ShipmentEvent[]
 
@@ -560,31 +605,31 @@ model ShipmentItem {
 }
 
 model Payment {
-  id                String                @id @default(cuid())
-  orderId           String                @unique
-  provider          String                @default("TEST_PENDING")
-  providerPaymentId String?               @unique
-  idempotencyKey    String?               @unique @db.VarChar(120)
-  amount            Decimal               @db.Decimal(12, 2)
-  currency          String                @default("TRY") @db.VarChar(3)
-  status            PaymentStatus         @default(PENDING)
-  paymentMethod     String?               @db.VarChar(80)
-  metadata          Json?
-  paidAt            DateTime?
-  failedAt          DateTime?
-  expiredAt         DateTime?
-  reservationExpiresAt DateTime?
-  stockReleasedAt   DateTime?
-  stockReleaseReason StockReleaseReason?
-  expiryClaimToken String?                @unique @db.VarChar(64)
-  expiryClaimedAt DateTime?
-  expiryClaimExpiresAt DateTime?
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
-  order             Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  events            PaymentEvent[]
-  refunds           Refund[]
-  audits            FinancialAuditEvent[]
+  id                    String                        @id @default(cuid())
+  orderId               String                        @unique
+  provider              String                        @default("TEST_PENDING")
+  providerPaymentId     String?                       @unique
+  idempotencyKey        String?                       @unique @db.VarChar(120)
+  amount                Decimal                       @db.Decimal(12, 2)
+  currency              String                        @default("TRY") @db.VarChar(3)
+  status                PaymentStatus                 @default(PENDING)
+  paymentMethod         String?                       @db.VarChar(80)
+  metadata              Json?
+  paidAt                DateTime?
+  failedAt              DateTime?
+  expiredAt             DateTime?
+  reservationExpiresAt  DateTime?
+  stockReleasedAt       DateTime?
+  stockReleaseReason    StockReleaseReason?
+  expiryClaimToken      String?                       @unique @db.VarChar(64)
+  expiryClaimedAt       DateTime?
+  expiryClaimExpiresAt  DateTime?
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
+  order                 Order                         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events                PaymentEvent[]
+  refunds               Refund[]
+  audits                FinancialAuditEvent[]
   reconciliationReviews PaymentReconciliationReview[]
 
   @@index([status, createdAt])
@@ -594,14 +639,14 @@ model Payment {
 }
 
 model PaymentEvent {
-  id              String   @id @default(cuid())
-  paymentId       String
-  provider        String   @db.VarChar(80)
-  providerEventId String   @db.VarChar(191)
-  eventType       String   @db.VarChar(100)
-  payloadHash     String?  @db.VarChar(128)
-  processedAt     DateTime @default(now())
-  payment         Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  id                    String                        @id @default(cuid())
+  paymentId             String
+  provider              String                        @db.VarChar(80)
+  providerEventId       String                        @db.VarChar(191)
+  eventType             String                        @db.VarChar(100)
+  payloadHash           String?                       @db.VarChar(128)
+  processedAt           DateTime                      @default(now())
+  payment               Payment                       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   reconciliationReviews PaymentReconciliationReview[]
 
   @@unique([provider, providerEventId])
@@ -609,23 +654,23 @@ model PaymentEvent {
 }
 
 model PaymentReconciliationReview {
-  id             String                              @id @default(cuid())
-  paymentId      String
-  paymentEventId String?
-  reason         PaymentReconciliationReason
-  terminalStatus PaymentStatus
-  status         PaymentReconciliationReviewStatus   @default(PENDING)
-  priority       PaymentReconciliationPriority       @default(HIGH)
-  fingerprint    String                              @db.Char(64)
-  openFingerprint String?                            @unique @db.Char(64)
-  metadata       Json?
-  createdAt      DateTime                            @default(now())
-  updatedAt      DateTime                            @updatedAt
-  resolvedAt     DateTime?
+  id               String                            @id @default(cuid())
+  paymentId        String
+  paymentEventId   String?
+  reason           PaymentReconciliationReason
+  terminalStatus   PaymentStatus
+  status           PaymentReconciliationReviewStatus @default(PENDING)
+  priority         PaymentReconciliationPriority     @default(HIGH)
+  fingerprint      String                            @db.Char(64)
+  openFingerprint  String?                           @unique @db.Char(64)
+  metadata         Json?
+  createdAt        DateTime                          @default(now())
+  updatedAt        DateTime                          @updatedAt
+  resolvedAt       DateTime?
   resolvedByUserId String?
-  payment        Payment                             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  paymentEvent   PaymentEvent?                       @relation(fields: [paymentEventId], references: [id], onDelete: SetNull)
-  resolvedBy     User?                               @relation("PaymentReconciliationResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  payment          Payment                           @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  paymentEvent     PaymentEvent?                     @relation(fields: [paymentEventId], references: [id], onDelete: SetNull)
+  resolvedBy       User?                             @relation("PaymentReconciliationResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
 
   @@index([paymentId, status, createdAt])
   @@index([status, priority, createdAt])
@@ -634,32 +679,32 @@ model PaymentReconciliationReview {
 }
 
 model Refund {
-  id                String                 @id @default(cuid())
-  paymentId         String
-  orderId           String
-  orderItemId       String
-  sellerId          String
-  requestedByUserId String?
-  idempotencyKey    String                 @unique @db.VarChar(120)
-  providerRefundId  String?                @unique @db.VarChar(191)
-  quantity          Int                    @default(1)
-  executionKey      String?                @unique @db.VarChar(120)
-  providerOutcome   String?                @db.VarChar(32)
+  id                 String                 @id @default(cuid())
+  paymentId          String
+  orderId            String
+  orderItemId        String
+  sellerId           String
+  requestedByUserId  String?
+  idempotencyKey     String                 @unique @db.VarChar(120)
+  providerRefundId   String?                @unique @db.VarChar(191)
+  quantity           Int                    @default(1)
+  executionKey       String?                @unique @db.VarChar(120)
+  providerOutcome    String?                @db.VarChar(32)
   providerObservedAt DateTime?
-  amount            Decimal                @db.Decimal(12, 2)
-  currency          String                 @default("TRY") @db.VarChar(3)
-  reason            String                 @db.VarChar(500)
-  status            RefundStatus           @default(REQUESTED)
-  requestedAt       DateTime               @default(now())
-  completedAt       DateTime?
-  updatedAt         DateTime               @updatedAt
-  payment           Payment                @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  order             Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  orderItem         OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
-  seller            SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  requestedBy       User?                  @relation("RefundRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
-  audits            FinancialAuditEvent[]
-  ledgerEntries     FinancialLedgerEntry[]
+  amount             Decimal                @db.Decimal(12, 2)
+  currency           String                 @default("TRY") @db.VarChar(3)
+  reason             String                 @db.VarChar(500)
+  status             RefundStatus           @default(REQUESTED)
+  requestedAt        DateTime               @default(now())
+  completedAt        DateTime?
+  updatedAt          DateTime               @updatedAt
+  payment            Payment                @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  order              Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem          OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  seller             SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  requestedBy        User?                  @relation("RefundRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  audits             FinancialAuditEvent[]
+  ledgerEntries      FinancialLedgerEntry[]
 
   @@index([sellerId, status, requestedAt])
   @@index([orderId, requestedAt])
@@ -713,6 +758,41 @@ model Notification {
   @@index([userId, status, createdAt])
   @@index([sellerId, status, createdAt])
   @@index([status, createdAt])
+}
+
+model SellerKybDocument {
+  id         String                  @id @default(cuid())
+  sellerId   String
+  seller     SellerProfile           @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  type       SellerKybDocumentType
+  reference  String                  @db.VarChar(500)
+  fileName   String?                 @db.VarChar(191)
+  status     SellerKybDocumentStatus @default(PROVIDED)
+  reviewNote String?                 @db.VarChar(500)
+  providedAt DateTime                @default(now())
+  reviewedAt DateTime?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  @@unique([sellerId, type])
+  @@index([sellerId, status])
+}
+
+model SellerOnboardingEvent {
+  id             String                  @id @default(cuid())
+  sellerId       String
+  seller         SellerProfile           @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  actorUserId    String
+  actor          User                    @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  action         String                  @db.VarChar(100)
+  fromStatus     SellerOnboardingStatus?
+  toStatus       SellerOnboardingStatus
+  reason         String?                 @db.VarChar(500)
+  idempotencyKey String                  @unique @db.VarChar(191)
+  createdAt      DateTime                @default(now())
+
+  @@index([sellerId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model SellerPayout {
