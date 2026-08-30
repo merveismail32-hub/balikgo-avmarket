@@ -1,9 +1,12 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { Pool } from "pg";
 import { cancelOrderItem, decideRefund, reconcileOrderPayouts, requestOrderItemReturn, transitionOrderItem } from "../app/lib/order-orchestrator";
-import { isDuplicatePaymentEventConflict, processVerifiedPaymentEvent } from "../app/lib/payment-orchestrator";
+import { processPaymentCallback, processVerifiedPaymentEvent } from "../app/lib/payment-orchestrator";
 import { transitionSellerShipment } from "../app/lib/shipment-orchestrator";
 import { createSellerShipment } from "../app/lib/shipment-creation";
 import { ingestCarrierShipmentEvent } from "../app/lib/shipment-event-ingestion";
@@ -12,10 +15,44 @@ import { guardedTestConnectionOptions } from "./guarded-test-prisma";
 
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 const connection = guardedTestConnectionOptions();
+const pool = new Pool(connection);
 const prisma = new PrismaClient({
-  adapter: new PrismaPg(connection),
+  adapter: new PrismaPg(pool),
   transactionOptions: { maxWait: 10_000, timeout: 30_000 },
 });
+async function prepareGuardianPool() {
+  const clients = await Promise.all([pool.connect(), pool.connect()]);
+  try {
+    await Promise.all(clients.map((client) => client.query("SELECT 1")));
+  } finally {
+    clients.forEach((client) => client.release());
+  }
+  console.log("GUARDIAN_POOL_READY: 2");
+}
+const diagnostic = process.env.GUARDIAN_DIAGNOSTIC === "1" ? new PrismaClient({ adapter: new PrismaPg({ ...connection, max: 1 }) }) : null;
+async function snapshot() {
+  if (!diagnostic) return;
+  const rows = await diagnostic.$queryRaw<Array<{ pid: number; usename: string; application_name: string; state: string; wait_event_type: string | null; wait_event: string | null; xact_start: Date | null; query_start: Date; transaction_age: string | null; query: string; blockers: number[]; lock_types: string[] }>>`
+    SELECT activity.pid,
+           activity.usename,
+           activity.application_name,
+           activity.state,
+           activity.wait_event_type,
+           activity.wait_event,
+           activity.xact_start,
+           activity.query_start,
+           CASE WHEN activity.xact_start IS NULL THEN NULL ELSE clock_timestamp() - activity.xact_start END::text AS transaction_age,
+           activity.query,
+           pg_blocking_pids(activity.pid) AS blockers,
+           COALESCE(array_agg(DISTINCT locks.locktype) FILTER (WHERE locks.locktype IS NOT NULL), ARRAY[]::text[]) AS lock_types
+      FROM pg_stat_activity activity
+      LEFT JOIN pg_locks locks ON locks.pid = activity.pid
+     WHERE activity.datname = current_database()
+       AND activity.pid <> pg_backend_pid()
+     GROUP BY activity.pid, activity.usename, activity.application_name, activity.state, activity.wait_event_type, activity.wait_event, activity.xact_start, activity.query_start, activity.query
+     ORDER BY activity.pid`;
+  console.log("POSTGRES_LOCK_SNAPSHOT", JSON.stringify(rows.map((row) => ({ ...row, query: row.query.slice(0, 240) }))));
+}
 
 type Fixture = { users: string[]; sellers: string[]; catalogs: string[]; products: string[]; offers: string[]; movements: string[]; orders: string[]; items: string[]; payments: string[]; payouts: string[]; refunds: string[]; ledger: string[]; events: string[]; shipments: string[]; shipmentItems: string[]; notificationIds: string[]; auditIds: string[] };
 const empty = (): Fixture => ({ users: [], sellers: [], catalogs: [], products: [], offers: [], movements: [], orders: [], items: [], payments: [], payouts: [], refunds: [], ledger: [], events: [], shipments: [], shipmentItems: [], notificationIds: [], auditIds: [] });
@@ -63,14 +100,66 @@ async function cleanup(f: Fixture) {
   } catch (error) { throw new Error(`EXACT_ID_CLEANUP_FAILED:${error instanceof Error ? error.message : "unknown"}`); }
 }
 type Actor = { u: { id: string; sellerProfile: { id: string } | null }; p: { id: string }; o: { id: string } };
-async function create(input: { paid?: boolean; delivered?: boolean; sellers?: number; stock?: number } = {}) {
-  const f = empty(), key = randomUUID(), stock = input.stock ?? 0, sellerCount = input.sellers ?? 1;
+async function create(input: { paid?: boolean; delivered?: boolean; sellers?: number; stock?: number; quantity?: number } = {}) {
+  const f = empty(), key = randomUUID(), stock = input.stock ?? 0, sellerCount = input.sellers ?? 1, quantity = input.quantity ?? 1;
   try {
+  console.log("FIXTURE:S1:START customer");
   const customer = await prisma.user.create({ data: { name: "TG", surname: "QA", email: `tg-${key}@invalid.local`, phone: "0", passwordHash: "qa" } }); f.users.push(customer.id);
+  console.log("FIXTURE:S1:DONE customer");
+  console.log("FIXTURE:S2:START catalog-product");
   const catalog = await prisma.catalogProduct.create({ data: { slug: `tg-${key}`, identityKey: `tg-${key}`, name: "TG", category: "QA", brand: "QA", description: "QA", imageUrl: "/qa" } }); f.catalogs.push(catalog.id);
+  console.log("FIXTURE:S2:DONE catalog-product");
   const lines: Prisma.OrderItemUncheckedCreateWithoutOrderInput[] = [], actors: Actor[] = [];
-  for (let i=0;i<sellerCount;i++) { const u=await prisma.user.create({ data:{name:"TG",surname:`S${i}`,email:`tg-s${i}-${key}@invalid.local`,phone:"0",passwordHash:"qa",role:"SELLER",sellerProfile:{create:{storeName:`tg-s${i}-${key}`,storeSlug:`tg-s${i}-${key}`,companyType:"QA",taxNumber:`tg-${key}-${i}`,taxOffice:"QA",city:"QA",address:"QA",description:"QA",status:"APPROVED"}}},include:{sellerProfile:true}}); f.users.push(u.id);f.sellers.push(u.sellerProfile!.id);const p=await prisma.product.create({data:{sellerId:u.sellerProfile!.id,catalogProductId:catalog.id,name:"TG",slug:`tg-p${i}-${key}`,category:"QA",brand:"QA",price:100,stock,description:"QA",imageUrl:"/qa"}});f.products.push(p.id);const o=await prisma.sellerOffer.create({data:{sellerId:u.sellerProfile!.id,catalogProductId:catalog.id,legacyProductId:p.id,sellerSku:`tg-${key}-${i}`,price:100,stock}});f.offers.push(o.id);actors.push({u,p,o});lines.push({productId:p.id,catalogProductId:catalog.id,sellerOfferId:o.id,sellerId:u.sellerProfile!.id,productName:"TG",productImageUrl:"/qa",unitPrice:100,quantity:1,commissionAmount:10,sellerNetAmount:90,status:input.delivered&&i===0?"DELIVERED":"NEW"}); }
-  const order=await prisma.order.create({data:{userId:customer.id,orderNumber:`TG-${key}`,clientRequestId:randomUUID(),totalAmount:100*sellerCount,recipientName:"QA",phone:"0",city:"QA",district:"QA",address:"QA",items:{create:lines}},include:{items:true}});f.orders.push(order.id);f.items.push(...order.items.map(x=>x.id));const payment=await prisma.payment.create({data:{orderId:order.id,amount:100*sellerCount,provider:"TEST_PENDING",idempotencyKey:`tg-${key}`,status:input.paid?"PAID":"PENDING"}});f.payments.push(payment.id);for(let i=0;i<order.items.length;i++){const x=await prisma.sellerPayout.create({data:{sellerId:actors[i].u.sellerProfile!.id,orderId:order.id,orderItemId:order.items[i].id,grossAmount:100,commissionAmount:10,netAmount:90}});f.payouts.push(x.id)} return {f,customer,actors,order,payment};
+  for (let i = 0; i < sellerCount; i++) {
+    console.log(`FIXTURE:S3:START seller-store:${i}`);
+    console.log(`FIXTURE:S3:SELLER_USER:START:${i}`);
+    const sellerUser = await prisma.user.create({ data: { name: "TG", surname: `S${i}`, email: `tg-s${i}-${key}@invalid.local`, phone: "0", passwordHash: "qa", role: "SELLER" } });
+    f.users.push(sellerUser.id);
+    console.log(`FIXTURE:S3:SELLER_USER:DONE:${i}`);
+    console.log(`FIXTURE:S3:SELLER_PROFILE:START:${i}`);
+    const sellerProfile = await prisma.sellerProfile.create({ data: { userId: sellerUser.id, storeName: `tg-s${i}-${key}`, storeSlug: `tg-s${i}-${key}`, companyType: "QA", taxNumber: `tg-${key}-${i}`, taxOffice: "QA", city: "QA", address: "QA", description: "QA", status: "APPROVED" } });
+    f.sellers.push(sellerProfile.id);
+    console.log(`FIXTURE:S3:SELLER_PROFILE:DONE:${i}`);
+    const u = { id: sellerUser.id, sellerProfile };
+    console.log(`FIXTURE:S3:DONE seller-store:${i}`);
+    console.log(`FIXTURE:S4:START inventory-product:${i}`);
+    const p = await prisma.product.create({ data: { sellerId: u.sellerProfile!.id, catalogProductId: catalog.id, name: "TG", slug: `tg-p${i}-${key}`, category: "QA", brand: "QA", price: 100, stock, description: "QA", imageUrl: "/qa" } });
+    f.products.push(p.id);
+    console.log(`FIXTURE:S4:DONE inventory-product:${i}`);
+    console.log(`FIXTURE:S5:START seller-offer:${i}`);
+    const o = await prisma.sellerOffer.create({ data: { sellerId: u.sellerProfile!.id, catalogProductId: catalog.id, legacyProductId: p.id, sellerSku: `tg-${key}-${i}`, price: 100, stock } });
+    f.offers.push(o.id); actors.push({ u, p, o });
+    lines.push({ productId: p.id, catalogProductId: catalog.id, sellerOfferId: o.id, sellerId: u.sellerProfile!.id, productName: "TG", productImageUrl: "/qa", unitPrice: 100, quantity, commissionAmount: 10 * quantity, sellerNetAmount: 90 * quantity, status: input.delivered && i === 0 ? "DELIVERED" : "NEW" });
+    console.log(`FIXTURE:S5:DONE seller-offer:${i}`);
+  }
+  console.log("FIXTURE:S6:START order-transaction-begin");
+  const order = await prisma.$transaction(async (tx) => {
+    console.log("FIXTURE:S6:DONE order-transaction-body-entered");
+    console.log("FIXTURE:S7:START order-create");
+    const createdOrder = await tx.order.create({
+      data: { userId: customer.id, orderNumber: `TG-${key}`, clientRequestId: randomUUID(), totalAmount: 100 * sellerCount * quantity, recipientName: "QA", phone: "0", city: "QA", district: "QA", address: "QA" },
+    });
+    console.log("FIXTURE:S7:DONE order-create");
+    console.log("FIXTURE:S8:START order-item-create");
+    for (const line of lines) await tx.orderItem.create({ data: { ...line, orderId: createdOrder.id } });
+    console.log("FIXTURE:S8:DONE order-item-create");
+    return tx.order.findUniqueOrThrow({ where: { id: createdOrder.id }, include: { items: true } });
+  });
+  console.log("FIXTURE:S6:RESOLVED order-transaction");
+  f.orders.push(order.id);
+  f.items.push(...order.items.map((item) => item.id));
+  console.log("FIXTURE:S9:START payment-setup");
+  const payment = await prisma.payment.create({ data: { orderId: order.id, amount: 100 * sellerCount * quantity, provider: "TEST_PENDING", idempotencyKey: `tg-${key}`, status: input.paid ? "PAID" : "PENDING" } });
+  f.payments.push(payment.id);
+  console.log("FIXTURE:S9:DONE payment-setup");
+  console.log("FIXTURE:S10:START payout-finance-setup");
+  for (let i = 0; i < order.items.length; i++) {
+    const payout = await prisma.sellerPayout.create({ data: { sellerId: actors[i].u.sellerProfile!.id, orderId: order.id, orderItemId: order.items[i].id, grossAmount: 100 * quantity, commissionAmount: 10 * quantity, netAmount: 90 * quantity } });
+    f.payouts.push(payout.id);
+  }
+  console.log("FIXTURE:S10:DONE payout-finance-setup");
+  console.log("FIXTURE:S11:DONE fixture-complete");
+  return { f, customer, actors, order, payment };
   } catch (error) {
     await cleanup(f);
     throw error;
@@ -79,7 +168,63 @@ async function create(input: { paid?: boolean; delivered?: boolean; sellers?: nu
 async function verifyCancellation(concurrent=false) { const x=await create({paid:true,stock:0});try{const run=()=>prisma.$transaction(tx=>cancelOrderItem(tx,{orderItemId:x.order.items[0].id,actor:{kind:"CUSTOMER",userId:x.customer.id}}));if(concurrent){const results=await Promise.allSettled(Array.from({length:2},run));assert(results.every(result=>result.status==="fulfilled"),"concurrent cancellation did not return idempotently");const values=results.map(result=>result.status==="fulfilled"?result.value:null);assert(values.filter(value=>value&&!value.idempotent).length===1&&values.filter(value=>value?.idempotent).length===1,"concurrent cancellation CAS result split failed")}else {await run();await run()}const item=x.order.items[0].id;const [offer,refunds,sale,commission,payment,movements]=await Promise.all([prisma.sellerOffer.findUniqueOrThrow({where:{id:x.actors[0].o.id}}),prisma.refund.findMany({where:{orderItemId:item}}),prisma.financialLedgerEntry.count({where:{orderItemId:item,type:"SALE_REVERSAL"}}),prisma.financialLedgerEntry.count({where:{orderItemId:item,type:"COMMISSION_REVERSAL"}}),prisma.payment.findUniqueOrThrow({where:{id:x.payment.id}}),prisma.stockMovement.count({where:{orderItemId:item,type:"RESERVATION_RELEASE"}})]);x.f.refunds.push(...refunds.map(r=>r.id));const ledger=await prisma.financialLedgerEntry.findMany({where:{orderItemId:item},select:{id:true}});x.f.ledger.push(...ledger.map(e=>e.id));x.f.auditIds.push(...(await prisma.financialAuditEvent.findMany({where:{orderId:x.order.id},select:{id:true}})).map(e=>e.id));x.f.notificationIds.push(...(await prisma.notification.findMany({where:{orderId:x.order.id},select:{id:true}})).map(e=>e.id));assert(offer.stock===1&&refunds.length===1&&sale===1&&commission===1&&payment.status==="REFUND_PENDING"&&movements===1,"cancellation invariant failed");}finally{await cleanup(x.f)}}
 async function legacyCancellation(){const x=await create({stock:0,sellers:2});try{const itemId=x.order.items[0].id;await prisma.orderItem.update({where:{id:itemId},data:{sellerOfferId:null}});const run=()=>prisma.$transaction(tx=>cancelOrderItem(tx,{orderItemId:itemId,actor:{kind:"CUSTOMER",userId:x.customer.id}}));const results=await Promise.allSettled(Array.from({length:2},run));const failures=results.filter((result):result is PromiseRejectedResult=>result.status==="rejected").map(result=>result.reason instanceof Error?result.reason.message:String(result.reason));assert(!failures.length,`legacy cancellation was not idempotent: ${failures.join(" | ")}`);const [product,movements,foreignProduct,foreignOffer]=await Promise.all([prisma.product.findUniqueOrThrow({where:{id:x.actors[0].p.id}}),prisma.stockMovement.count({where:{orderItemId:itemId}}),prisma.product.findUniqueOrThrow({where:{id:x.actors[1].p.id}}),prisma.sellerOffer.findUniqueOrThrow({where:{id:x.actors[1].o.id}})]);assert(product.stock===1&&movements===0,"legacy product-only restore/audit boundary failed");assert(foreignProduct.stock===0&&foreignOffer.stock===0,"legacy cancellation crossed product/seller boundary")}finally{await cleanup(x.f)}}
 async function stockRace(){const x=await create({stock:1});try{const buy=()=>prisma.sellerOffer.updateMany({where:{id:x.actors[0].o.id,stock:{gte:1}},data:{stock:{decrement:1}}});const r=await Promise.all([buy(),buy()]);assert(r[0].count+r[1].count===1,"stock race oversold")}finally{await cleanup(x.f)}}
-async function paymentEvent(concurrent=false) { const x=await create({stock:0}); const eventId=`tg-event-${randomUUID()}`; try { const run=()=>prisma.$transaction(tx=>processVerifiedPaymentEvent(tx,{provider:"TEST",event:{eventId,paymentId:x.payment.id,eventType:"PAYMENT_PAID",amount:"100",currency:"TRY",providerPaymentId:`tg-provider-${eventId}`},payloadHash:"tg-e2e"})); if(concurrent) { const results=await Promise.allSettled([run(),run()]);assert(results.some(result=>result.status==="fulfilled"),"concurrent payment had no success");assert(results.every(result=>result.status==="fulfilled"||isDuplicatePaymentEventConflict(result.reason)),"concurrent duplicate was not safely classifiable") } else { const first=await run(); const second=await run(); assert(!first.duplicate&&second.duplicate,"sequential payment idempotency failed") } const [payment,events,audits,notifications,orders,offer,payouts,ledger]=await Promise.all([prisma.payment.findUniqueOrThrow({where:{id:x.payment.id}}),prisma.paymentEvent.findMany({where:{paymentId:x.payment.id}}),prisma.financialAuditEvent.findMany({where:{paymentId:x.payment.id}}),prisma.notification.findMany({where:{orderId:x.order.id}}),prisma.order.count({where:{id:x.order.id}}),prisma.sellerOffer.findUniqueOrThrow({where:{id:x.actors[0].o.id}}),prisma.sellerPayout.count({where:{orderId:x.order.id}}),prisma.financialLedgerEntry.count({where:{orderItemId:x.order.items[0].id}})]); x.f.events.push(...events.map(e=>e.id));x.f.auditIds.push(...audits.map(e=>e.id));x.f.notificationIds.push(...notifications.map(e=>e.id));assert(payment.status==="PAID"&&events.length===1&&audits.length===1&&notifications.length===2&&orders===1&&offer.stock===0&&payouts===1&&ledger===0,"payment exactly-once invariant failed"); } finally { await cleanup(x.f) } }
+async function paymentEvent(concurrent = false) {
+  const x = await create({ stock: 0 });
+  const eventId = `tg-event-${randomUUID()}`;
+  const input = {
+    provider: "TEST",
+    event: {
+      eventId,
+      paymentId: x.payment.id,
+      eventType: "PAYMENT_PAID" as const,
+      amount: "100",
+      currency: "TRY",
+      providerPaymentId: `tg-provider-${eventId}`,
+    },
+    payloadHash: "tg-e2e",
+  };
+  try {
+    if (concurrent) {
+      const run = async (label: "A" | "B") => {
+        console.log(`CALLBACK_${label}_START`);
+        try {
+          const result = await processPaymentCallback(prisma, input);
+          console.log(`CALLBACK_${label}_RESOLVED`);
+          return result;
+        } catch (error) {
+          console.error(`CALLBACK_${label}_REJECTED`, error instanceof Error ? error.message : error);
+          throw error;
+        }
+      };
+      const callbackSnapshotTimer = diagnostic ? setTimeout(() => void snapshot().catch((error: unknown) => console.error("CALLBACK_SNAPSHOT_FAILED", error instanceof Error ? error.message : error)), 3_000) : null;
+      const results = await Promise.allSettled([run("A"), run("B")]);
+      if (callbackSnapshotTimer) clearTimeout(callbackSnapshotTimer);
+      assert(results.some((result) => result.status === "fulfilled"), "concurrent payment had no success");
+      assert(results.every((result) => result.status === "fulfilled"), "concurrent duplicate was not safely classifiable");
+    } else {
+      const run = () => prisma.$transaction((tx) => processVerifiedPaymentEvent(tx, input));
+      const first = await run();
+      const second = await run();
+      assert(!first.duplicate && second.duplicate, "sequential payment idempotency failed");
+    }
+    const [payment, events, audits, notifications, orders, offer, payouts, ledger] = await Promise.all([
+      prisma.payment.findUniqueOrThrow({ where: { id: x.payment.id } }),
+      prisma.paymentEvent.findMany({ where: { paymentId: x.payment.id } }),
+      prisma.financialAuditEvent.findMany({ where: { paymentId: x.payment.id } }),
+      prisma.notification.findMany({ where: { orderId: x.order.id } }),
+      prisma.order.count({ where: { id: x.order.id } }),
+      prisma.sellerOffer.findUniqueOrThrow({ where: { id: x.actors[0].o.id } }),
+      prisma.sellerPayout.count({ where: { orderId: x.order.id } }),
+      prisma.financialLedgerEntry.count({ where: { orderItemId: x.order.items[0].id } }),
+    ]);
+    x.f.events.push(...events.map((event) => event.id));
+    x.f.auditIds.push(...audits.map((audit) => audit.id));
+    x.f.notificationIds.push(...notifications.map((notification) => notification.id));
+    assert(payment.status === "PAID" && events.length === 1 && audits.length === 1 && notifications.length === 2 && orders === 1 && offer.stock === 0 && payouts === 1 && ledger === 0, "payment exactly-once invariant failed");
+  } finally {
+    await cleanup(x.f);
+  }
+}
 async function rollback(){const x=await create();const eventId=`tg-rollback-${randomUUID()}`;try{await prisma.$transaction(async tx=>{await processVerifiedPaymentEvent(tx,{provider:"TEST",event:{eventId,paymentId:x.payment.id,eventType:"PAYMENT_PAID",amount:"100",currency:"TRY"}});throw new Error("FORCED_ROLLBACK")}).catch(e=>assert(e instanceof Error&&e.message==="FORCED_ROLLBACK","unexpected rollback error"));const [payment,events,audits,notifications]=await Promise.all([prisma.payment.findUniqueOrThrow({where:{id:x.payment.id}}),prisma.paymentEvent.count({where:{paymentId:x.payment.id}}),prisma.financialAuditEvent.count({where:{paymentId:x.payment.id}}),prisma.notification.count({where:{orderId:x.order.id}})]);assert(payment.status==="PENDING"&&events===0&&audits===0&&notifications===0,"atomic rollback left partial effects")}finally{await cleanup(x.f)}}
 async function payoutOrder(paymentFirst:boolean){const x=await create({paid:paymentFirst,delivered:!paymentFirst});try{if(paymentFirst)await prisma.$transaction(tx=>transitionOrderItem(tx,{orderItemId:x.order.items[0].id,sellerId:x.actors[0].u.sellerProfile!.id,actorUserId:x.customer.id,target:"DELIVERED",allowedFrom:["NEW"]}));else await prisma.$transaction(async tx=>{await tx.payment.update({where:{id:x.payment.id},data:{status:"PAID"}});await reconcileOrderPayouts(tx,x.order.id)});assert((await prisma.sellerPayout.findUniqueOrThrow({where:{id:x.f.payouts[0]}})).status==="AVAILABLE","payout reconciliation failed")}finally{await cleanup(x.f)}}
 async function shipmentDelivery(){const a=await create({paid:true}),b=await create({paid:true});try{await prisma.$transaction(tx=>transitionOrderItem(tx,{orderItemId:a.order.items[0].id,sellerId:a.actors[0].u.sellerProfile!.id,actorUserId:a.customer.id,target:"DELIVERED",allowedFrom:["NEW"]}));const shipment=await prisma.shipment.create({data:{orderId:b.order.id,sellerId:b.actors[0].u.sellerProfile!.id,status:"SHIPPED",items:{create:{orderItemId:b.order.items[0].id,quantity:1}}},include:{items:true}});b.f.shipments.push(shipment.id);b.f.shipmentItems.push(...shipment.items.map(x=>x.id));const transitioned=await transitionSellerShipment({shipmentId:shipment.id,sellerId:b.actors[0].u.sellerProfile!.id,sellerUserId:b.actors[0].u.id,status:"DELIVERED"});assert(transitioned&&!transitioned.idempotent,"shipment fixture was not transitioned");const [ao,bo,ai,bi,ap,bp]=await Promise.all([prisma.order.findUniqueOrThrow({where:{id:a.order.id}}),prisma.order.findUniqueOrThrow({where:{id:b.order.id}}),prisma.orderItem.findUniqueOrThrow({where:{id:a.order.items[0].id}}),prisma.orderItem.findUniqueOrThrow({where:{id:b.order.items[0].id}}),prisma.sellerPayout.findUniqueOrThrow({where:{id:a.f.payouts[0]}}),prisma.sellerPayout.findUniqueOrThrow({where:{id:b.f.payouts[0]}})]);assert(ao.status===bo.status&&ai.status===bi.status&&ap.status===bp.status&&ap.netAmount.equals(bp.netAmount),`shipment reconciliation mismatch order=${ao.status}/${bo.status} item=${ai.status}/${bi.status} payout=${ap.status}/${bp.status} net=${ap.netAmount.toString()}/${bp.netAmount.toString()}`);const before=await Promise.all([prisma.sellerPayout.count({where:{orderId:b.order.id}}),prisma.financialLedgerEntry.count({where:{orderItemId:b.order.items[0].id}}),prisma.notification.count({where:{orderId:b.order.id}})]);await transitionSellerShipment({shipmentId:shipment.id,sellerId:b.actors[0].u.sellerProfile!.id,sellerUserId:b.actors[0].u.id,status:"DELIVERED"});const after=await Promise.all([prisma.sellerPayout.count({where:{orderId:b.order.id}}),prisma.financialLedgerEntry.count({where:{orderItemId:b.order.items[0].id}}),prisma.notification.count({where:{orderId:b.order.id}})]);assert(JSON.stringify(before)===JSON.stringify(after),"duplicate shipment delivery produced business effects");}finally{await cleanup(a.f);await cleanup(b.f)}}
@@ -96,8 +241,12 @@ async function prepareRequestedRefund(){const x=await create({paid:true,delivere
 async function refundDecisionRollback(){const {x,refund}=await prepareRequestedRefund();try{const before=await Promise.all([prisma.orderItem.findUniqueOrThrow({where:{id:x.order.items[0].id}}),prisma.order.findUniqueOrThrow({where:{id:x.order.id}}),prisma.payment.findUniqueOrThrow({where:{id:x.payment.id}}),prisma.sellerPayout.findUniqueOrThrow({where:{id:x.f.payouts[0]}}),prisma.financialAuditEvent.count({where:{orderId:x.order.id}}),prisma.notification.count({where:{orderId:x.order.id}})]);await prisma.$transaction(async tx=>{await decideRefund(tx,{refundId:refund.id,actorUserId:x.customer.id,decision:"REJECT"});throw new Error("FORCED_REFUND_DECISION_ROLLBACK")}).then(()=>{throw new Error("REFUND_DECISION_ROLLBACK_NOT_FORCED")},e=>assert(e instanceof Error&&e.message==="FORCED_REFUND_DECISION_ROLLBACK","unexpected refund decision rollback error"));const [latest,item,order,payment,payout,audits,notifications,ledger]=await Promise.all([prisma.refund.findUniqueOrThrow({where:{id:refund.id}}),prisma.orderItem.findUniqueOrThrow({where:{id:x.order.items[0].id}}),prisma.order.findUniqueOrThrow({where:{id:x.order.id}}),prisma.payment.findUniqueOrThrow({where:{id:x.payment.id}}),prisma.sellerPayout.findUniqueOrThrow({where:{id:x.f.payouts[0]}}),prisma.financialAuditEvent.count({where:{orderId:x.order.id}}),prisma.notification.count({where:{orderId:x.order.id}}),prisma.financialLedgerEntry.count({where:{orderItemId:x.order.items[0].id}})]);assert(latest.status==="REQUESTED"&&item.status===before[0].status&&order.status===before[1].status&&payment.status===before[2].status&&payout.status===before[3].status&&audits===before[4]&&notifications===before[5]&&ledger===0,"refund decision rollback left persistent effects")}finally{await cleanup(x.f)}}
 async function concurrentReturnAndDecision(){const x=await create({paid:true,delivered:true});try{await prisma.sellerPayout.update({where:{id:x.f.payouts[0]},data:{status:"AVAILABLE",availableAt:new Date()}});const request=()=>prisma.$transaction(tx=>requestOrderItemReturn(tx,{orderItemId:x.order.items[0].id,userId:x.customer.id,reason:"Concurrent return test"}));const requests=await Promise.allSettled(Array.from({length:2},request));const requestFailures=requests.filter((result):result is PromiseRejectedResult=>result.status==="rejected").map(result=>result.reason instanceof Error?result.reason.message:String(result.reason));assert(!requestFailures.length,`concurrent return produced an unexpected conflict: ${requestFailures.join(" | ")}`);const returnValues=requests.map(r=>r.status==="fulfilled"?r.value:null);assert(returnValues.filter(r=>r&&!r.idempotent).length===1&&returnValues.filter(r=>r?.idempotent).length===1,"concurrent return CAS result split failed");const refund=await prisma.refund.findFirstOrThrow({where:{orderItemId:x.order.items[0].id}});x.f.refunds.push(refund.id);const decide=()=>prisma.$transaction(tx=>decideRefund(tx,{refundId:refund.id,actorUserId:x.customer.id,decision:"REJECT"}));const decisions=await Promise.allSettled(Array.from({length:2},decide));const decisionFailures=decisions.filter((result):result is PromiseRejectedResult=>result.status==="rejected").map(result=>result.reason instanceof Error?result.reason.message:String(result.reason));assert(!decisionFailures.length,`concurrent refund decision produced an unexpected conflict: ${decisionFailures.join(" | ")}`);const decisionValues=decisions.map(r=>r.status==="fulfilled"?r.value:null);assert(decisionValues.filter(r=>r&&!r.idempotent).length===1&&decisionValues.filter(r=>r?.idempotent).length===1,"concurrent refund decision CAS result split failed");const [refundCount,item,order,payment,payout,audits,notifications,ledger]=await Promise.all([prisma.refund.count({where:{orderItemId:x.order.items[0].id}}),prisma.orderItem.findUniqueOrThrow({where:{id:x.order.items[0].id}}),prisma.order.findUniqueOrThrow({where:{id:x.order.id}}),prisma.payment.findUniqueOrThrow({where:{id:x.payment.id}}),prisma.sellerPayout.findUniqueOrThrow({where:{id:x.f.payouts[0]}}),prisma.financialAuditEvent.findMany({where:{orderId:x.order.id},select:{id:true}}),prisma.notification.findMany({where:{orderId:x.order.id},select:{id:true}}),prisma.financialLedgerEntry.count({where:{orderItemId:x.order.items[0].id}})]);x.f.auditIds.push(...audits.map(e=>e.id));x.f.notificationIds.push(...notifications.map(e=>e.id));assert(refundCount===1&&item.status==="DELIVERED"&&order.status==="DELIVERED"&&payment.status==="PAID"&&payout.status==="AVAILABLE"&&audits.length===2&&notifications.length===3&&ledger===0,"concurrent return/refund decision left duplicate effects")}finally{await cleanup(x.f)}}
 const tests:[string,()=>Promise<void>][]=[["successful payment and sequential duplicate payment",()=>paymentEvent(false)],["concurrent duplicate payment",()=>paymentEvent(true)],["atomic rollback and safe retry boundary",rollback],["paid cancellation; duplicate cancellation; stock/refund/ledger exactly once",()=>verifyCancellation(false)],["two concurrent cancellations are one CAS effect",()=>verifyCancellation(true)],["legacy cancellation is product-only and idempotent",legacyCancellation],["stock race",stockRace],["payment -> delivery",()=>payoutOrder(true)],["delivery -> payment",()=>payoutOrder(false)],["shipment delivery reconciliation and sequential duplicate delivery",shipmentDelivery],["shipment transitions, concurrent delivery, invalid transition and seller isolation",shipmentConcurrencyAndIsolation],["concurrent shipment creation and split delivery preserve item truth",concurrentShipmentCreation],["concurrent different-seller shipments preserve aggregate and payout isolation",concurrentDifferentSellerShipments],["carrier replay stale and terminal events are exactly-once auditable no-ops",carrierReplayStaleAndTerminal],["empty shipment cancellation preserves link and creates audit event",cancellationShipmentReconciliation],["cancel vs carrier handoff race has one consistent winner",cancellationHandoffRace],["concurrent aggregate and partial refund preserve seller isolation",concurrentAggregateAndPartialRefundIsolation],["return request and rejected refund replay restore order/payment/payout state",returnAndReject],["return request forced rollback leaves no persistent effects",returnRollback],["refund rejection forced rollback leaves no persistent effects",refundDecisionRollback],["concurrent return and refund decision CAS are exactly once",concurrentReturnAndDecision]];
-const selectedTest = process.env.GUARDIAN_TEST;
-const runnableTests = selectedTest ? tests.filter(([name]) => name === selectedTest) : tests;
-if (selectedTest && !runnableTests.length) throw new Error("UNKNOWN_GUARDIAN_TEST");
-async function main(){for(const [name,run] of runnableTests){try{await run();console.log(`PASS: ${name}`)}catch(e){console.error(`FAIL: ${name}`,e instanceof Error?e.message:e);process.exitCode=1}}}
-void main().catch((error)=>{console.error("FAIL: guardian runner",error instanceof Error?error.message:error);process.exitCode=1}).finally(()=>prisma.$disconnect());
+async function partialReturnQuantityAndRace(){const x=await create({paid:true,delivered:true,quantity:3});try{const itemId=x.order.items[0].id;const request=(quantity:number,key:string)=>prisma.$transaction(tx=>requestOrderItemReturn(tx,{orderItemId:itemId,userId:x.customer.id,reason:"Partial return",quantity,idempotencyKey:key}));await request(1,randomUUID());await request(1,randomUUID());const duplicateKey=randomUUID();const duplicate=await Promise.all([request(1,duplicateKey),request(1,duplicateKey)]);assert(duplicate.filter(result=>result!==null&&!result.idempotent).length===1&&duplicate.filter(result=>result!==null&&result.idempotent).length===1,"duplicate partial request was not exactly once");const refunds=await prisma.refund.findMany({where:{orderItemId:itemId}});x.f.refunds.push(...refunds.map(refund=>refund.id));assert(refunds.reduce((sum,refund)=>sum+refund.quantity,0)===3&&refunds.reduce((sum,refund)=>sum.plus(refund.amount),new Prisma.Decimal(0)).equals(300),"partial refund quantity or allocated amount is incorrect");await request(1,randomUUID()).then(()=>{throw new Error("QUANTITY_LIMIT_NOT_ENFORCED")},error=>assert(error instanceof Error&&error.message==="RETURN_QUANTITY_EXCEEDED","wrong cumulative quantity failure"));const y=await create({paid:true,delivered:true,quantity:3});try{const race=await Promise.allSettled([prisma.$transaction(tx=>requestOrderItemReturn(tx,{orderItemId:y.order.items[0].id,userId:y.customer.id,reason:"Race",quantity:2,idempotencyKey:randomUUID()})),prisma.$transaction(tx=>requestOrderItemReturn(tx,{orderItemId:y.order.items[0].id,userId:y.customer.id,reason:"Race",quantity:2,idempotencyKey:randomUUID()}))]);const successes=race.filter(result=>result.status==="fulfilled");const failure=race.find(result=>result.status==="rejected");assert(successes.length===1&&failure&&failure.status==="rejected"&&failure.reason instanceof Error&&failure.reason.message==="RETURN_QUANTITY_EXCEEDED","concurrent partial quantity limit was not serialized");const raceRefunds=await prisma.refund.findMany({where:{orderItemId:y.order.items[0].id}});y.f.refunds.push(...raceRefunds.map(refund=>refund.id));assert(raceRefunds.reduce((sum,refund)=>sum+refund.quantity,0)===2,"race left incorrect quantity")}finally{await cleanup(y.f)}}finally{await cleanup(x.f)}}
+tests.push(["partial return quantities, idempotency and concurrent cumulative limit are serialized",partialReturnQuantityAndRace]);
+const selectedTests = (process.env.GUARDIAN_TESTS ?? process.env.GUARDIAN_TEST ?? "").split("|").filter(Boolean);
+const runnableTests = selectedTests.length ? tests.filter(([name]) => selectedTests.includes(name)) : tests;
+if (selectedTests.length && runnableTests.length !== selectedTests.length) throw new Error("UNKNOWN_GUARDIAN_TEST");
+async function main(){const timer=diagnostic?setTimeout(()=>void snapshot().catch(e=>console.error("DIAGNOSTIC_FAIL",e instanceof Error?e.message:e)),3000):null;console.log(`START: guardian scenarios=${runnableTests.length}`);for(const [name,run] of runnableTests){console.log(`START: ${name}`);try{await prepareGuardianPool();await run();console.log(`PASS: ${name}`);if(diagnostic)await snapshot()}catch(e){console.error(`FAIL: ${name}`,e instanceof Error?e.message:e);process.exitCode=1}}if(timer)clearTimeout(timer);console.log("END: guardian scenarios complete")}
+async function parent(){const script=JSON.stringify(fileURLToPath(import.meta.url));const bootstrap=`process.geteuid=()=>0;const {pathToFileURL}=require("node:url");import("tsx/esm/api").then(({register})=>{register();return import(pathToFileURL(${script}).href)}).catch(error=>{console.error("FAIL: guardian child bootstrap",error instanceof Error?error.message:error);process.exitCode=1});`;for(const [name] of tests){const child=spawn(process.execPath,["--env-file=.env","--conditions=react-server","--eval",bootstrap],{cwd:process.cwd(),env:{...process.env,GUARDIAN_CHILD:"1",GUARDIAN_TEST:name},stdio:"inherit",windowsHide:true});const code=await new Promise<number|null>(resolve=>child.once("exit",resolve));if(code!==0){process.exitCode=1;return}}}
+if(process.env.GUARDIAN_CHILD==="1"||selectedTests.length) main().catch((error)=>{console.error("FAIL: guardian runner",error instanceof Error?error.message:error);process.exitCode=1}).finally(async()=>{await prisma.$disconnect();await pool.end();await diagnostic?.$disconnect();console.log("END: guardian disconnect")});
+else void parent().catch((error)=>{console.error("FAIL: guardian parent",error instanceof Error?error.message:error);process.exitCode=1}).finally(async()=>{await prisma.$disconnect();await pool.end();await diagnostic?.$disconnect()});

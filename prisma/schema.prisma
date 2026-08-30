@@ -642,6 +642,10 @@ model Refund {
   requestedByUserId String?
   idempotencyKey    String                 @unique @db.VarChar(120)
   providerRefundId  String?                @unique @db.VarChar(191)
+  quantity          Int                    @default(1)
+  executionKey      String?                @unique @db.VarChar(120)
+  providerOutcome   String?                @db.VarChar(32)
+  providerObservedAt DateTime?
   amount            Decimal                @db.Decimal(12, 2)
   currency          String                 @default("TRY") @db.VarChar(3)
   reason            String                 @db.VarChar(500)
@@ -660,6 +664,7 @@ model Refund {
   @@index([sellerId, status, requestedAt])
   @@index([orderId, requestedAt])
   @@index([paymentId, status])
+  @@index([orderItemId, status, requestedAt])
 }
 
 model FinancialAuditEvent {

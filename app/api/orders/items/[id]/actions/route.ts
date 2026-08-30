@@ -6,7 +6,7 @@ import { cancelOrderItem, requestOrderItemReturn } from "@/app/lib/order-orchest
 
 const inputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("CANCEL") }).strict(),
-  z.object({ action: z.literal("REQUEST_RETURN"), reason: z.string().trim().min(10).max(500) }).strict(),
+  z.object({ action: z.literal("REQUEST_RETURN"), reason: z.string().trim().min(10).max(500), quantity: z.number().int().min(1).optional(), idempotencyKey: z.string().uuid().optional() }).strict(),
 ]);
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -18,14 +18,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const result = await prisma.$transaction(async (tx) => {
       if (parsed.data.action === "CANCEL") return cancelOrderItem(tx, { orderItemId: id, actor: { kind: "CUSTOMER", userId: session.user.id } });
-      return requestOrderItemReturn(tx, { orderItemId: id, userId: session.user.id, reason: parsed.data.reason });
+      return requestOrderItemReturn(tx, { orderItemId: id, userId: session.user.id, reason: parsed.data.reason, quantity: parsed.data.quantity, idempotencyKey: parsed.data.idempotencyKey });
     });
     return result ? NextResponse.json({ ok: true, ...result }) : NextResponse.json({ error: "Sipariş kalemi bulunamadı." }, { status: 404 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message === "CARRIER_HANDOFF") return NextResponse.json({ error: "Bu ürün kargoya verildiği için artık iptal edilemez. Teslimattan sonra iade talebi oluşturabilirsiniz." }, { status: 409 });
     if (message === "RETURN_REQUIRED") return NextResponse.json({ error: "Teslim edilen ürünler iptal edilemez; iade talebi oluşturabilirsiniz." }, { status: 409 });
-    if (message === "INVALID_ITEM_STATE" || message === "INVALID_STATE" || message === "CONCURRENT_CHANGE") return NextResponse.json({ error: "Bu sipariş kalemi mevcut durumunda bu işlem için uygun değil." }, { status: 409 });
+    if (["INVALID_ITEM_STATE", "INVALID_STATE", "CONCURRENT_CHANGE", "RETURN_QUANTITY_INVALID", "RETURN_QUANTITY_EXCEEDED", "RETURN_IDEMPOTENCY_CONFLICT"].includes(message)) return NextResponse.json({ error: "Bu sipariş kalemi mevcut durumunda bu işlem için uygun değil." }, { status: 409 });
     if (message === "PAYMENT_NOT_FOUND" || message === "PAYMENT_NOT_PAID") return NextResponse.json({ error: "Bu sipariş için uygun bir ödeme kaydı bulunamadı." }, { status: 409 });
     console.error("[customer-order-action] failed", { orderItemId: id, code: (error as { code?: string }).code });
     return NextResponse.json({ error: "İşlem tamamlanamadı. Lütfen tekrar deneyin." }, { status: 500 });

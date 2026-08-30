@@ -44,7 +44,7 @@ export async function ensurePaidCancellationIntegrity(tx: Prisma.TransactionClie
   const items = await tx.orderItem.findMany({ where: { orderId, status: "CANCELLED" }, select: { id: true, sellerId: true, unitPrice: true, quantity: true, discountAmount: true, commissionAmount: true, payout: { select: { id: true } } } });
   for (const item of items) {
     const amount = item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2);
-    const refund = await tx.refund.upsert({ where: { idempotencyKey: `cancellation:${item.id}` }, update: {}, create: { paymentId: payment.id, orderId, orderItemId: item.id, sellerId: item.sellerId, idempotencyKey: `cancellation:${item.id}`, amount, reason: "Ödeme doğrulanmadan önce iptal edilen sipariş kalemi", status: "REQUESTED" } });
+    const refund = await tx.refund.upsert({ where: { idempotencyKey: `cancellation:${item.id}` }, update: {}, create: { paymentId: payment.id, orderId, orderItemId: item.id, sellerId: item.sellerId, idempotencyKey: `cancellation:${item.id}`, quantity: item.quantity, amount, reason: "Ödeme doğrulanmadan önce iptal edilen sipariş kalemi", status: "REQUESTED" } });
     await tx.financialLedgerEntry.createMany({ data: cancellationLedgerReversals({ sellerId: item.sellerId, orderItemId: item.id, payoutId: item.payout?.id, refundId: refund.id, grossAmount: amount, commissionAmount: item.commissionAmount ?? new Prisma.Decimal(0) }), skipDuplicates: true });
     await tx.financialAuditEvent.upsert({ where: { source_externalEventId: { source: "GUARDIAN", externalEventId: `late-payment-cancel:${item.id}` } }, update: {}, create: { paymentId: payment.id, refundId: refund.id, orderId, entityType: "REFUND", entityId: refund.id, eventType: "CANCELLATION_REFUND_REQUESTED", toStatus: "REQUESTED", source: "GUARDIAN", externalEventId: `late-payment-cancel:${item.id}` } });
     await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId, type: "REFUND_REQUESTED", dedupeKey: `late-payment-cancel:${item.id}:customer`, title: "İade süreci başlatıldı", message: `${payment.order.orderNumber} numaralı siparişinizde iptal edilen kalem için ödeme iadesi beklemeye alındı.` }]);
@@ -99,7 +99,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   const payment = item.order.payment;
   if (eligibility.refundRequired && payment) {
     const amount = item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2);
-    const refund = await tx.refund.upsert({ where: { idempotencyKey: `cancellation:${item.id}` }, update: {}, create: { paymentId: payment.id, orderId: item.orderId, orderItemId: item.id, sellerId: item.sellerId, requestedByUserId: input.actor.userId, idempotencyKey: `cancellation:${item.id}`, amount, reason: input.reason?.trim() || `${input.actor.kind === "CUSTOMER" ? "Müşteri" : "Satıcı"} sipariş iptali`, status: "REQUESTED" } });
+    const refund = await tx.refund.upsert({ where: { idempotencyKey: `cancellation:${item.id}` }, update: {}, create: { paymentId: payment.id, orderId: item.orderId, orderItemId: item.id, sellerId: item.sellerId, requestedByUserId: input.actor.userId, idempotencyKey: `cancellation:${item.id}`, quantity: item.quantity, amount, reason: input.reason?.trim() || `${input.actor.kind === "CUSTOMER" ? "Müşteri" : "Satıcı"} sipariş iptali`, status: "REQUESTED" } });
     refundId = refund.id;
     await tx.financialLedgerEntry.createMany({ data: cancellationLedgerReversals({ sellerId: item.sellerId, orderItemId: item.id, payoutId: item.payout?.id, refundId: refund.id, grossAmount: amount, commissionAmount: item.commissionAmount ?? new Prisma.Decimal(0) }), skipDuplicates: true });
     await synchronizePaymentRefundStatus(tx, payment.id);
@@ -118,7 +118,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   return { status: "CANCELLED" as const, idempotent: false, refundId };
 }
 
-export async function requestOrderItemReturn(tx: Prisma.TransactionClient, input: { orderItemId: string; userId: string; reason: string }) {
+export async function requestOrderItemReturn(tx: Prisma.TransactionClient, input: { orderItemId: string; userId: string; reason: string; quantity?: number; idempotencyKey?: string }) {
   const item = await tx.orderItem.findFirst({
     where: { id: input.orderItemId, order: { userId: input.userId } },
     select: { id: true, orderId: true, sellerId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, status: true, order: { select: { orderNumber: true, payment: { select: { id: true, status: true } } } } },
@@ -130,12 +130,30 @@ export async function requestOrderItemReturn(tx: Prisma.TransactionClient, input
   if (!payment) throw new Error("PAYMENT_NOT_FOUND");
   if (payment.status !== "PAID" && payment.status !== "PARTIAL_REFUND_PENDING" && payment.status !== "REFUND_PENDING") throw new Error("PAYMENT_NOT_PAID");
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`return:${item.id}`}, 0))`;
+  const quantity = input.quantity ?? item.quantity;
+  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > item.quantity) throw new Error("RETURN_QUANTITY_INVALID");
+  const idempotencyKey = input.idempotencyKey ? `return:${item.id}:${input.idempotencyKey}` : `return:${item.id}`;
+  const replay = await tx.refund.findUnique({ where: { idempotencyKey }, select: { id: true, quantity: true, status: true } });
+  if (replay) {
+    if (replay.quantity !== quantity) throw new Error("RETURN_IDEMPOTENCY_CONFLICT");
+    return { status: "RETURN_REQUESTED" as const, idempotent: true, refundId: replay.id };
+  }
+  const existing = await tx.refund.aggregate({ where: { orderItemId: item.id, status: { in: ["REQUESTED", "APPROVED", "PROCESSING", "COMPLETED"] } }, _sum: { quantity: true } });
+  if ((existing._sum.quantity ?? 0) + quantity > item.quantity) throw new Error("RETURN_QUANTITY_EXCEEDED");
+  const amount = item.unitPrice.mul(quantity).minus(item.discountAmount.mul(quantity).div(item.quantity)).toDecimalPlaces(2);
 
   const refund = await tx.refund.upsert({
-    where: { idempotencyKey: `return:${item.id}` },
+    where: { idempotencyKey },
     update: {},
-    create: { paymentId: payment.id, orderId: item.orderId, orderItemId: item.id, sellerId: item.sellerId, requestedByUserId: input.userId, idempotencyKey: `return:${item.id}`, amount: item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2), reason: input.reason },
+    create: { paymentId: payment.id, orderId: item.orderId, orderItemId: item.id, sellerId: item.sellerId, requestedByUserId: input.userId, idempotencyKey, quantity, amount, reason: input.reason },
   });
+  if (refund.quantity !== quantity) throw new Error("RETURN_IDEMPOTENCY_CONFLICT");
+  if (quantity !== item.quantity) {
+    await tx.sellerPayout.updateMany({ where: { orderItemId: item.id, status: { in: ["PENDING", "AVAILABLE", "SCHEDULED"] } }, data: { status: "BLOCKED" } });
+    await synchronizePaymentRefundStatus(tx, payment.id);
+    await tx.financialAuditEvent.upsert({ where: { source_externalEventId: { source: "CUSTOMER_RETURN", externalEventId: refund.id } }, update: {}, create: { paymentId: payment.id, refundId: refund.id, orderId: item.orderId, actorUserId: input.userId, entityType: "REFUND", entityId: refund.id, eventType: "PARTIAL_RETURN_REQUESTED", toStatus: "REQUESTED", source: "CUSTOMER_RETURN", externalEventId: refund.id } });
+    return { status: "RETURN_REQUESTED" as const, idempotent: false, refundId: refund.id };
+  }
   const changed = await tx.orderItem.updateMany({ where: { id: item.id, status: { in: ["DELIVERED", "COMPLETED"] }, order: { userId: input.userId } }, data: { status: "RETURN_REQUESTED" } });
   if (!changed.count) {
     const latest = await tx.orderItem.findFirst({ where: { id: item.id, order: { userId: input.userId } }, select: { status: true } });

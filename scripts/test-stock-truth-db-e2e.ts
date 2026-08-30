@@ -18,7 +18,12 @@ async function actor(label: string, stock = 10) {
   const offer = await prisma.sellerOffer.create({ data: { sellerId: user.sellerProfile!.id, catalogProductId: catalog.id, legacyProductId: product.id, sellerSku: `ST-${key}`, price: 10, stock } }); ids.offers.push(offer.id);
   return { sellerId: user.sellerProfile!.id, productId: product.id, offerId: offer.id };
 }
-async function snapshot(x: { productId: string; offerId: string }) { return Promise.all([prisma.sellerOffer.findUniqueOrThrow({ where: { id: x.offerId } }), prisma.product.findUniqueOrThrow({ where: { id: x.productId } }), prisma.stockMovement.findMany({ where: { sellerOfferId: x.offerId }, orderBy: { createdAt: "asc" } })]); }
+async function snapshot(x: { productId: string; offerId: string }) {
+  const offer = await prisma.sellerOffer.findUniqueOrThrow({ where: { id: x.offerId } });
+  const product = await prisma.product.findUniqueOrThrow({ where: { id: x.productId } });
+  const movements = await prisma.stockMovement.findMany({ where: { sellerOfferId: x.offerId }, orderBy: { createdAt: "asc" } });
+  return [offer, product, movements] as const;
+}
 async function cleanup() {
   const movementRows = await prisma.stockMovement.findMany({ where: { sellerOfferId: { in: ids.offers } }, select: { id: true } }); ids.movements.push(...movementRows.map(x => x.id));
   if (ids.movements.length) await prisma.stockMovement.deleteMany({ where: { id: { in: [...new Set(ids.movements)] } } });
