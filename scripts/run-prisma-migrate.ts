@@ -1,7 +1,7 @@
 import "dotenv/config";
-import { migrationChildEnvironment, selectMigrationTarget } from "./guarded-operation-prisma";
-import { repositoryRoot, runLocalPrisma } from "./local-prisma-runner";
-import { hydrateVerifiedTestEnvironment } from "./local-test-environment";
+import { migrationChildEnvironment, selectMigrationTarget } from "./guarded-operation-prisma.ts";
+import { repositoryRoot, runLocalPrisma } from "./local-prisma-runner.ts";
+import { hydrateVerifiedTestEnvironment } from "./local-test-environment.ts";
 
 const mode = process.argv[2];
 const action = process.argv[3] ?? "deploy";

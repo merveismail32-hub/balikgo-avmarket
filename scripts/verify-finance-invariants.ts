@@ -1,8 +1,11 @@
 import "dotenv/config";
+import { resolve } from "node:path";
 import { Prisma } from "@prisma/client";
 import { createGuardedTestPrisma } from "./guarded-test-prisma";
+import { hydrateVerifiedTestEnvironment } from "./local-test-environment";
 
-const prisma = createGuardedTestPrisma();
+const testEnv = hydrateVerifiedTestEnvironment(process.env, resolve(import.meta.dirname, ".."));
+const prisma = createGuardedTestPrisma({ DATABASE_URL: testEnv.DATABASE_URL, SUPABASE_CA_CERT_PATH: testEnv.SUPABASE_CA_CERT_PATH });
 const rollback = new Error("ROLLBACK_FINANCE_QA");
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 async function counts() { return { orders: await prisma.order.count(), items: await prisma.orderItem.count(), payments: await prisma.payment.count(), payouts: await prisma.sellerPayout.count(), refunds: await prisma.refund.count(), events: await prisma.paymentEvent.count(), notifications: await prisma.notification.count() }; }

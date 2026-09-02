@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { bankDestinationFingerprint } from "../app/lib/financial-identity-validation";
+import { buildBankDestinationContext, evaluateCurrentBankDestination, normalizeBeneficiaryName } from "../app/lib/bank-destination-domain";
+
+const iban = "TR33 0006 1005 1978 6457 8413 26";
+const first = buildBankDestinationContext({ financialIdentityId: "identity-a", iban, beneficiaryName: "  Balık   Go A.Ş. " });
+const equivalent = buildBankDestinationContext({ financialIdentityId: "identity-a", iban: first.canonicalIban, beneficiaryName: "BALIK GO A.Ş." });
+assert.equal(first.canonicalIban, "TR330006100519786457841326");
+assert.equal(first.normalizedFingerprint, equivalent.normalizedFingerprint);
+assert.equal(normalizeBeneficiaryName("  Balık   Go A.Ş. "), "Balık Go A.Ş.");
+const changed = buildBankDestinationContext({ financialIdentityId: "identity-a", iban, beneficiaryName: "Başka Hesap Sahibi" });
+assert.notEqual(changed.normalizedFingerprint, first.normalizedFingerprint);
+assert.equal(first.normalizedFingerprint, bankDestinationFingerprint({ financialIdentityId: "identity-a", canonicalIban: first.canonicalIban, beneficiaryName: first.beneficiaryName }));
+const revision = { id: "revision-a", financialIdentityId: "identity-a", destinationVersion: 1, canonicalIban: first.canonicalIban, beneficiaryName: first.beneficiaryName, normalizedFingerprint: first.normalizedFingerprint };
+assert.equal(evaluateCurrentBankDestination({ id: "identity-a", currentBankDestinationRevisionId: "revision-a" }, revision).current, true);
+assert.equal(evaluateCurrentBankDestination({ id: "identity-b", currentBankDestinationRevisionId: "revision-a" }, revision).current, false);
+assert.equal(evaluateCurrentBankDestination({ id: "identity-a", currentBankDestinationRevisionId: "revision-b" }, revision).current, false);
+assert.equal(evaluateCurrentBankDestination({ id: "identity-a", currentBankDestinationRevisionId: "revision-a" }, { ...revision, normalizedFingerprint: "f".repeat(64) }).current, false);
+assert.throws(() => buildBankDestinationContext({ financialIdentityId: "identity-a", iban: "TR00", beneficiaryName: "Test" }));
+console.log("PASS: #20 Slice D bank normalization, fingerprint and current-pointer binding");

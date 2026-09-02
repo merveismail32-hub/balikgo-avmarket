@@ -54,6 +54,7 @@ export async function saveAndSubmitSellerOnboarding(input: { userId: string; dat
       data: { onboardingStatus: "SUBMITTED", submittedAt: now, reviewedAt: null, reviewerUserId: null, revisionReason: null, activationEligible: false, onboardingVersion: { increment: 1 } },
     });
     if (transitioned.count !== 1) throw new SellerOnboardingError("CONFLICT", "Başvuru eşzamanlı olarak değiştirildi; güncel durumu yükleyin.");
+    await tx.sellerFinancialIdentity.updateMany({ where: { sellerId: profile.id }, data: { holdActive: true, holdReasonCode: "TAX_VERIFICATION_REQUIRED", holdSetAt: now, holdReleasedAt: null, coordinationVersion: { increment: 1 } } });
     await tx.user.update({ where: { id: input.userId }, data: { phone: data.phone } });
     await tx.sellerOnboardingEvent.create({ data: { sellerId: profile.id, actorUserId: input.userId, action: existing?.onboardingStatus === "NEEDS_REVISION" ? "RESUBMITTED" : "SUBMITTED", fromStatus: existing?.onboardingStatus ?? "DRAFT", toStatus: "SUBMITTED", idempotencyKey: input.idempotencyKey } });
     return tx.sellerProfile.findUniqueOrThrow({ where: { id: profile.id }, select: sellerSafeSelect });
@@ -91,6 +92,7 @@ export async function reviewSellerOnboarding(input: { sellerId: string; reviewer
       },
     });
     if (changed.count !== 1) throw new SellerOnboardingError("CONFLICT", "Başvuru başka bir inceleyici tarafından değiştirildi.");
+    await tx.sellerFinancialIdentity.updateMany({ where: { sellerId: input.sellerId }, data: { holdActive: true, holdReasonCode: "TAX_VERIFICATION_REQUIRED", holdSetAt: now, holdReleasedAt: null, coordinationVersion: { increment: 1 } } });
     await tx.sellerOnboardingEvent.create({ data: { sellerId: input.sellerId, actorUserId: input.reviewerUserId, action: input.action, fromStatus: current.onboardingStatus, toStatus: target, reason: input.reason?.trim(), idempotencyKey: input.idempotencyKey } });
     return { id: input.sellerId, onboardingStatus: target, activationEligible: target === "APPROVED" };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

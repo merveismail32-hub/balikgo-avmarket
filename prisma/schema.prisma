@@ -42,6 +42,34 @@ enum SellerKybDocumentStatus {
   REJECTED
 }
 
+enum FinancialVerificationStatus {
+  UNVERIFIED
+  PENDING
+  NEEDS_REVIEW
+  VERIFIED
+  REJECTED
+  REVERIFICATION_REQUIRED
+}
+
+enum FinancialVerificationSource {
+  LOCAL
+  MANUAL
+  PROVIDER
+  AUTHORITY
+}
+
+enum FinancialVerificationAssurance {
+  LOCAL_CHECKS_ONLY
+  DOCUMENT_REVIEWED
+  PROVIDER_VERIFIED
+  AUTHORITY_VERIFIED
+}
+
+enum TaxIdentifierType {
+  TCKN
+  VKN
+}
+
 enum ProductModerationStatus {
   PENDING
   APPROVED
@@ -209,79 +237,189 @@ enum StockReleaseReason {
 }
 
 model User {
-  id                                   String                        @id @default(cuid())
+  id                                   String                          @id @default(cuid())
   name                                 String
   surname                              String
-  email                                String                        @unique
+  email                                String                          @unique
   phone                                String
   passwordHash                         String
-  role                                 UserRole                      @default(CUSTOMER)
+  role                                 UserRole                        @default(CUSTOMER)
+  financialIdentityReviewerEnabled     Boolean                         @default(false)
   sellerProfile                        SellerProfile?
   cartItems                            CartItem[]
   favorites                            Favorite[]
   orders                               Order[]
   orderStatusChanges                   OrderStatusHistory[]
-  refundsRequested                     Refund[]                      @relation("RefundRequester")
+  refundsRequested                     Refund[]                        @relation("RefundRequester")
   financialAudits                      FinancialAuditEvent[]
   notifications                        Notification[]
   reviews                              Review[]
   couponRedemptions                    CouponRedemption[]
   adminAudits                          AdminAuditLog[]
   sellerOnboardingEvents               SellerOnboardingEvent[]
-  sellerOnboardingReviews              SellerProfile[]               @relation("SellerOnboardingReviewer")
-  paymentReconciliationReviewsResolved PaymentReconciliationReview[] @relation("PaymentReconciliationResolver")
-  createdAt                            DateTime                      @default(now())
-  updatedAt                            DateTime                      @updatedAt
+  sellerOnboardingReviews              SellerProfile[]                 @relation("SellerOnboardingReviewer")
+  paymentReconciliationReviewsResolved PaymentReconciliationReview[]   @relation("PaymentReconciliationResolver")
+  taxVerificationReviews               TaxVerification[]               @relation("TaxVerificationReviewer")
+  financialVerificationEvidenceReviews FinancialVerificationEvidence[] @relation("FinancialVerificationEvidenceReviewer")
+  createdAt                            DateTime                        @default(now())
+  updatedAt                            DateTime                        @updatedAt
 }
 
 model SellerProfile {
-  id                      String                  @id @default(cuid())
-  userId                  String                  @unique
-  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeName               String
-  storeSlug               String?                 @unique
-  companyType             String
-  phone                   String                  @default("")
-  taxNumber               String
-  taxOffice               String
-  city                    String
-  address                 String
-  description             String
-  categories              String                  @default("")
-  status                  SellerStatus            @default(PENDING)
-  rejectionReason         String?                 @db.VarChar(500)
-  onboardingStatus        SellerOnboardingStatus  @default(DRAFT)
-  legalName               String                  @default("") @db.VarChar(191)
-  authorizedPersonName    String                  @default("") @db.VarChar(100)
-  authorizedPersonSurname String                  @default("") @db.VarChar(100)
-  authorizedPersonEmail   String                  @default("") @db.VarChar(191)
-  authorizedPersonTitle   String                  @default("") @db.VarChar(100)
-  termsAcceptedAt         DateTime?
-  submittedAt             DateTime?
-  reviewedAt              DateTime?
-  approvedAt              DateTime?
-  reviewerUserId          String?
-  reviewer                User?                   @relation("SellerOnboardingReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
-  revisionReason          String?                 @db.VarChar(500)
-  activationEligible      Boolean                 @default(false)
-  onboardingVersion       Int                     @default(0)
-  kybDocuments            SellerKybDocument[]
-  onboardingEvents        SellerOnboardingEvent[]
-  products                Product[]
-  offers                  SellerOffer[]
-  catalogMatchReviews     CatalogMatchReview[]
-  orderItems              OrderItem[]
-  payouts                 SellerPayout[]
-  refunds                 Refund[]
-  notifications           Notification[]
-  coupons                 Coupon[]
-  ledgerEntries           FinancialLedgerEntry[]
-  shipments               Shipment[]
-  createdAt               DateTime                @default(now())
-  updatedAt               DateTime                @updatedAt
+  id                            String                          @id @default(cuid())
+  userId                        String                          @unique
+  user                          User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeName                     String
+  storeSlug                     String?                         @unique
+  companyType                   String
+  phone                         String                          @default("")
+  taxNumber                     String
+  taxOffice                     String
+  city                          String
+  address                       String
+  description                   String
+  categories                    String                          @default("")
+  status                        SellerStatus                    @default(PENDING)
+  rejectionReason               String?                         @db.VarChar(500)
+  onboardingStatus              SellerOnboardingStatus          @default(DRAFT)
+  legalName                     String                          @default("") @db.VarChar(191)
+  authorizedPersonName          String                          @default("") @db.VarChar(100)
+  authorizedPersonSurname       String                          @default("") @db.VarChar(100)
+  authorizedPersonEmail         String                          @default("") @db.VarChar(191)
+  authorizedPersonTitle         String                          @default("") @db.VarChar(100)
+  termsAcceptedAt               DateTime?
+  submittedAt                   DateTime?
+  reviewedAt                    DateTime?
+  approvedAt                    DateTime?
+  reviewerUserId                String?
+  reviewer                      User?                           @relation("SellerOnboardingReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  revisionReason                String?                         @db.VarChar(500)
+  activationEligible            Boolean                         @default(false)
+  onboardingVersion             Int                             @default(0)
+  kybDocuments                  SellerKybDocument[]
+  onboardingEvents              SellerOnboardingEvent[]
+  products                      Product[]
+  offers                        SellerOffer[]
+  catalogMatchReviews           CatalogMatchReview[]
+  orderItems                    OrderItem[]
+  payouts                       SellerPayout[]
+  refunds                       Refund[]
+  notifications                 Notification[]
+  coupons                       Coupon[]
+  ledgerEntries                 FinancialLedgerEntry[]
+  shipments                     Shipment[]
+  financialIdentity             SellerFinancialIdentity?
+  taxVerifications              TaxVerification[]
+  financialVerificationEvidence FinancialVerificationEvidence[]
+  createdAt                     DateTime                        @default(now())
+  updatedAt                     DateTime                        @updatedAt
 
   @@index([onboardingStatus, createdAt])
   @@index([reviewerUserId])
+}
+
+model SellerFinancialIdentity {
+  id                               String                          @id @default(cuid())
+  sellerId                         String                          @unique(map: "SellerFinancialIdentity_seller_key")
+  currentBankDestinationRevisionId String?                         @unique(map: "SellerFinancialIdentity_current_bank_key")
+  coordinationVersion              Int                             @default(0)
+  holdActive                       Boolean                         @default(true)
+  holdReasonCode                   String                          @default("FINANCIAL_IDENTITY_INCOMPLETE") @db.VarChar(100)
+  holdSetAt                        DateTime                        @default(now())
+  holdReleasedAt                   DateTime?
+  createdAt                        DateTime                        @default(now())
+  updatedAt                        DateTime                        @updatedAt
+  seller                           SellerProfile                   @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "SellerFinancialIdentity_sellerId_fkey")
+  currentBankDestinationRevision   BankDestinationRevision?        @relation("CurrentBankDestinationRevision", fields: [id, currentBankDestinationRevisionId], references: [financialIdentityId, id], onDelete: Restrict, map: "SellerFinancialIdentity_current_bank_fkey")
+  bankDestinationRevisions         BankDestinationRevision[]       @relation("FinancialIdentityBankDestinations")
+  verificationEvidence             FinancialVerificationEvidence[]
+
+  @@unique([sellerId, id], map: "SellerFinancialIdentity_seller_id_key")
+  @@unique([id, currentBankDestinationRevisionId], map: "SellerFinancialIdentity_current_pair_key")
+  @@index([holdActive, updatedAt], map: "SellerFinancialIdentity_hold_updated_idx")
+}
+
+model BankDestinationRevision {
+  id                          String                          @id @default(cuid())
+  financialIdentityId         String
+  destinationVersion          Int
+  canonicalIban               String                          @db.VarChar(34)
+  beneficiaryName             String                          @db.VarChar(191)
+  normalizedFingerprint       String                          @db.VarChar(64)
+  verificationStatus          FinancialVerificationStatus     @default(UNVERIFIED)
+  verificationSource          FinancialVerificationSource     @default(LOCAL)
+  verificationAssurance       FinancialVerificationAssurance  @default(LOCAL_CHECKS_ONLY)
+  submittedAt                 DateTime?
+  decidedAt                   DateTime?
+  createdAt                   DateTime                        @default(now())
+  financialIdentity           SellerFinancialIdentity         @relation("FinancialIdentityBankDestinations", fields: [financialIdentityId], references: [id], onDelete: Restrict, map: "BankDestinationRevision_financialIdentityId_fkey")
+  currentForFinancialIdentity SellerFinancialIdentity?        @relation("CurrentBankDestinationRevision")
+  evidence                    FinancialVerificationEvidence[]
+
+  @@unique([financialIdentityId, destinationVersion], map: "BankDestinationRevision_identity_version_key")
+  @@unique([financialIdentityId, id], map: "BankDestinationRevision_identity_id_key")
+  @@index([financialIdentityId, normalizedFingerprint], map: "BankDestinationRevision_identity_fingerprint_idx")
+  @@index([verificationStatus, createdAt], map: "BankDestinationRevision_status_created_idx")
+}
+
+model TaxVerification {
+  id                    String                          @id @default(cuid())
+  sellerId              String
+  onboardingVersion     Int
+  identifierType        TaxIdentifierType
+  normalizedFingerprint String                          @db.VarChar(64)
+  verificationStatus    FinancialVerificationStatus     @default(UNVERIFIED)
+  verificationSource    FinancialVerificationSource     @default(LOCAL)
+  verificationAssurance FinancialVerificationAssurance  @default(LOCAL_CHECKS_ONLY)
+  reviewerUserId        String?
+  reasonCode            String?                         @db.VarChar(100)
+  idempotencyKey        String                          @unique @db.VarChar(191)
+  submittedAt           DateTime?
+  decidedAt             DateTime?
+  createdAt             DateTime                        @default(now())
+  seller                SellerProfile                   @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "TaxVerification_sellerId_fkey")
+  reviewer              User?                           @relation("TaxVerificationReviewer", fields: [reviewerUserId], references: [id], onDelete: Restrict, map: "TaxVerification_reviewerUserId_fkey")
+  evidence              FinancialVerificationEvidence[]
+
+  @@unique([sellerId, onboardingVersion, normalizedFingerprint], map: "TaxVerification_seller_version_fingerprint_key")
+  @@unique([sellerId, id], map: "TaxVerification_seller_id_key")
+  @@index([sellerId, verificationStatus, createdAt], map: "TaxVerification_seller_status_created_idx")
+  @@index([reviewerUserId, createdAt], map: "TaxVerification_reviewer_created_idx")
+}
+
+model FinancialVerificationEvidence {
+  id                        String                         @id @default(cuid())
+  sellerId                  String
+  financialIdentityId       String?
+  bankDestinationRevisionId String?
+  taxVerificationId         String?
+  verificationSource        FinancialVerificationSource
+  verificationAssurance     FinancialVerificationAssurance
+  normalizedFingerprint     String                         @db.VarChar(64)
+  identityVersion           Int
+  reviewerUserId            String?
+  evidenceReference         String?                        @db.VarChar(500)
+  reasonCode                String?                        @db.VarChar(100)
+  requestIdempotencyKey     String                         @unique @db.VarChar(191)
+  providerName              String?                        @db.VarChar(80)
+  providerEnvironment       String?                        @db.VarChar(40)
+  providerAccountReference  String?                        @db.VarChar(191)
+  providerReference         String?                        @db.VarChar(191)
+  providerEventId           String?                        @db.VarChar(191)
+  decidedAt                 DateTime?
+  createdAt                 DateTime                       @default(now())
+  seller                    SellerProfile                  @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "FinancialVerificationEvidence_sellerId_fkey")
+  financialIdentity         SellerFinancialIdentity?       @relation(fields: [sellerId, financialIdentityId], references: [sellerId, id], onDelete: Restrict, map: "FinancialEvidence_seller_identity_fkey")
+  bankDestinationRevision   BankDestinationRevision?       @relation(fields: [financialIdentityId, bankDestinationRevisionId], references: [financialIdentityId, id], onDelete: Restrict, map: "FinancialEvidence_identity_bank_fkey")
+  taxVerification           TaxVerification?               @relation(fields: [sellerId, taxVerificationId], references: [sellerId, id], onDelete: Restrict, map: "FinancialEvidence_seller_tax_fkey")
+  reviewer                  User?                          @relation("FinancialVerificationEvidenceReviewer", fields: [reviewerUserId], references: [id], onDelete: Restrict, map: "FinancialVerificationEvidence_reviewerUserId_fkey")
+
+  @@unique([providerName, providerEnvironment, providerAccountReference, providerEventId], map: "FinancialEvidence_provider_event_key")
+  @@index([sellerId, createdAt], map: "FinancialEvidence_seller_created_idx")
+  @@index([financialIdentityId, createdAt], map: "FinancialEvidence_identity_created_idx")
+  @@index([bankDestinationRevisionId, createdAt], map: "FinancialEvidence_bank_created_idx")
+  @@index([taxVerificationId, createdAt], map: "FinancialEvidence_tax_created_idx")
+  @@index([reviewerUserId, createdAt], map: "FinancialEvidence_reviewer_created_idx")
 }
 
 model Product {

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
-import { getAdminSellerOnboarding, reviewSellerOnboarding, SellerOnboardingError } from "@/app/lib/seller-onboarding";
+import { reviewSellerOnboarding, SellerOnboardingError } from "@/app/lib/seller-onboarding";
+import { prisma } from "@/app/lib/prisma";
+import { adminSellerApplicationSummarySelect, toAdminSellerApplicationSummaryDto } from "@/app/lib/admin-seller-application-dto";
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("start_review") }).strict(),
@@ -23,8 +25,8 @@ function failure(error: unknown) {
 export async function GET(_request: Request, { params }: RouteContext<"/api/admin/seller-applications/[id]">) {
   const session = await auth();
   if (!session?.user?.id || session.user.role !== "ADMIN") return NextResponse.json({ error: "Yönetici yetkisi gerekli." }, { status: 403 });
-  const application = await getAdminSellerOnboarding((await params).id);
-  return application ? NextResponse.json(application) : NextResponse.json({ error: "Başvuru bulunamadı." }, { status: 404 });
+  const application = await prisma.sellerProfile.findUnique({ where: { id: (await params).id }, select: adminSellerApplicationSummarySelect });
+  return application ? NextResponse.json(toAdminSellerApplicationSummaryDto(application)) : NextResponse.json({ error: "Başvuru bulunamadı." }, { status: 404 });
 }
 
 export async function PATCH(request: Request, { params }: RouteContext<"/api/admin/seller-applications/[id]">) {
