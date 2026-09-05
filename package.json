@@ -56,6 +56,11 @@
     "test:finance-read-model": "node --conditions=react-server --import data:text/javascript,import%20os%20from%20'node%3Aos'%3Bos.userInfo%3D()%3D%3E(%7Busername%3A'qa'%2Chomedir%3Aprocess.cwd()%2Cshell%3Anull%2Cuid%3A-1%2Cgid%3A-1%7D)%3B --import tsx scripts/verify-finance-read-model.ts",
     "test:finance-read-model-db": "node --env-file=.env --conditions=react-server --import data:text/javascript,import%20os%20from%20'node%3Aos'%3Bos.userInfo%3D()%3D%3E(%7Busername%3A'qa'%2Chomedir%3Aprocess.cwd()%2Cshell%3Anull%2Cuid%3A-1%2Cgid%3A-1%7D)%3B --import tsx scripts/test-finance-read-model-db-e2e.ts",
     "test:financial-identity-closeout": "node --conditions=react-server --import data:text/javascript,import%20os%20from%20'node%3Aos'%3Bos.userInfo%3D()%3D%3E(%7Busername%3A'qa'%2Chomedir%3Aprocess.cwd()%2Cshell%3Anull%2Cuid%3A-1%2Cgid%3A-1%7D)%3B --import tsx scripts/verify-financial-identity-closeout.ts",
+    "test:trust-primitives": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-trust-primitives.ts",
+    "test:financial-trust-adoption": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-financial-trust-adoption.ts",
+    "test:provider-trust-boundary": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-provider-trust-boundary.ts",
+    "test:cross-domain-trust-hardening": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-cross-domain-trust-hardening.ts",
+    "test:safe-trust-read-model": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-safe-trust-read-model.ts",
     "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {
