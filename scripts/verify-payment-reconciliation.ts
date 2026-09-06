@@ -11,4 +11,7 @@ assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "SUCCEEDED", 
 assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "SUCCEEDED", currency: "USD" }).category, "CURRENCY_MISMATCH");
 assert.equal(classifyPaymentMismatch(payment("PENDING"), { status: "UNKNOWN" }).category, "UNKNOWN_PROVIDER_STATE");
 assert.equal(classifyPaymentMismatch(payment("PENDING", "RELEASED"), { status: "SUCCEEDED" }).decision, "REQUIRE_MANUAL_REVIEW");
+assert.equal(classifyPaymentMismatch({ ...payment("PENDING"), selectedInstallmentCount: 1, providerConfirmedInstallmentCount: null }, { status: "PENDING", providerConfirmedInstallmentCount: 3 }).category, "INSTALLMENT_COUNT_MISMATCH");
+assert.equal(classifyPaymentMismatch({ ...payment("PENDING"), selectedInstallmentCount: 1, providerConfirmedInstallmentCount: 3 }, { status: "PENDING", providerConfirmedInstallmentCount: 1 }).category, "INSTALLMENT_COUNT_MISMATCH");
+assert.throws(() => classifyPaymentMismatch({ ...payment("PENDING"), selectedInstallmentCount: 1, providerConfirmedInstallmentCount: null }, { status: "PENDING", providerConfirmedInstallmentCount: 99 as never }), /INVALID_PROVIDER_CONFIRMED_INSTALLMENT/);
 console.log("PASS: payment reconciliation taxonomy separates safe replay candidates from manual-review mismatches");

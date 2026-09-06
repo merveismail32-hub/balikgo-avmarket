@@ -143,6 +143,7 @@ enum PaymentReconciliationReason {
   EXPIRY_FULFILLMENT_CONFLICT
   EXPIRY_RELEASE_FAILED
   PAYMENT_STOCK_STATE_MISMATCH
+  INSTALLMENT_COUNT_MISMATCH
 }
 
 enum PaymentReconciliationPriority {
@@ -748,32 +749,40 @@ model ShipmentItem {
 }
 
 model Payment {
-  id                    String                        @id @default(cuid())
-  orderId               String                        @unique
-  provider              String                        @default("TEST_PENDING")
-  providerPaymentId     String?                       @unique
-  idempotencyKey        String?                       @unique @db.VarChar(120)
-  amount                Decimal                       @db.Decimal(12, 2)
-  currency              String                        @default("TRY") @db.VarChar(3)
-  status                PaymentStatus                 @default(PENDING)
-  paymentMethod         String?                       @db.VarChar(80)
-  metadata              Json?
-  paidAt                DateTime?
-  failedAt              DateTime?
-  expiredAt             DateTime?
-  reservationExpiresAt  DateTime?
-  stockReleasedAt       DateTime?
-  stockReleaseReason    StockReleaseReason?
-  expiryClaimToken      String?                       @unique @db.VarChar(64)
-  expiryClaimedAt       DateTime?
-  expiryClaimExpiresAt  DateTime?
-  createdAt             DateTime                      @default(now())
-  updatedAt             DateTime                      @updatedAt
-  order                 Order                         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  events                PaymentEvent[]
-  refunds               Refund[]
-  audits                FinancialAuditEvent[]
-  reconciliationReviews PaymentReconciliationReview[]
+  id                                     String                        @id @default(cuid())
+  orderId                                String                        @unique
+  provider                               String                        @default("TEST_PENDING")
+  providerPaymentId                      String?                       @unique
+  idempotencyKey                         String?                       @unique @db.VarChar(120)
+  amount                                 Decimal                       @db.Decimal(12, 2)
+  currency                               String                        @default("TRY") @db.VarChar(3)
+  status                                 PaymentStatus                 @default(PENDING)
+  paymentMethod                          String?                       @db.VarChar(80)
+  metadata                               Json?
+  selectedInstallmentCount               Int?
+  installmentPolicySource                String?                       @db.VarChar(40)
+  installmentPolicyReference             String?                       @db.VarChar(120)
+  installmentPolicyVersion               String?                       @db.VarChar(80)
+  installmentProvider                    String?                       @db.VarChar(40)
+  installmentProviderCapabilitySource    String?                       @db.VarChar(60)
+  installmentProviderCapabilityReference String?                       @db.VarChar(120)
+  providerConfirmedInstallmentCount      Int?
+  paidAt                                 DateTime?
+  failedAt                               DateTime?
+  expiredAt                              DateTime?
+  reservationExpiresAt                   DateTime?
+  stockReleasedAt                        DateTime?
+  stockReleaseReason                     StockReleaseReason?
+  expiryClaimToken                       String?                       @unique @db.VarChar(64)
+  expiryClaimedAt                        DateTime?
+  expiryClaimExpiresAt                   DateTime?
+  createdAt                              DateTime                      @default(now())
+  updatedAt                              DateTime                      @updatedAt
+  order                                  Order                         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events                                 PaymentEvent[]
+  refunds                                Refund[]
+  audits                                 FinancialAuditEvent[]
+  reconciliationReviews                  PaymentReconciliationReview[]
 
   @@index([status, createdAt])
   @@index([provider, createdAt])

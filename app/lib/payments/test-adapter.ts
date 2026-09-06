@@ -3,14 +3,14 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { MarketplacePaymentAdapter, VerifiedPaymentEvent } from "./types";
 
-const eventSchema = z.object({ eventId: z.string().min(8).max(191), paymentId: z.string().min(1), eventType: z.enum(["PAYMENT_PAID", "PAYMENT_FAILED"]), amount: z.string().regex(/^\d+(\.\d{1,2})?$/), currency: z.literal("TRY"), providerPaymentId: z.string().max(191).optional() }).strict();
+const eventSchema = z.object({ eventId: z.string().min(8).max(191), paymentId: z.string().min(1), eventType: z.enum(["PAYMENT_PAID", "PAYMENT_FAILED"]), amount: z.string().regex(/^\d+(\.\d{1,2})?$/), currency: z.literal("TRY"), providerPaymentId: z.string().max(191).optional(), providerConfirmedInstallmentCount: z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(9)]).optional() }).strict();
 
 export class TestPaymentAdapter implements MarketplacePaymentAdapter {
   readonly name = "TEST";
   private assertEnabled() {
     if (process.env.NODE_ENV === "production" || process.env.ENABLE_TEST_PAYMENT_ADAPTER !== "true") throw new Error("TEST_PROVIDER_DISABLED");
   }
-  async createPayment() { this.assertEnabled(); return { status: "PENDING" as const }; }
+  async createPayment(input: Parameters<MarketplacePaymentAdapter["createPayment"]>[0]) { this.assertEnabled(); if (input.selectedInstallmentCount !== undefined && input.selectedInstallmentCount !== 1) throw new Error("TEST_PROVIDER_INSTALLMENT_UNSUPPORTED"); return { status: "PENDING" as const }; }
   async verifyPayment() { this.assertEnabled(); return { status: "PENDING" as const }; }
   async cancelPayment() { this.assertEnabled(); return { status: "CANCELLED" as const }; }
   async refundPayment(): Promise<{ providerRefundId: string; status: "PROCESSING" | "COMPLETED" }> { this.assertEnabled(); throw new Error("TEST_REFUND_NOT_IMPLEMENTED"); }

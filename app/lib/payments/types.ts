@@ -1,9 +1,10 @@
 import type { PaymentStatus } from "@prisma/client";
+import type { InstallmentCount } from "../installment-policy";
 
-export type VerifiedPaymentEvent = { eventId: string; paymentId: string; eventType: "PAYMENT_PAID" | "PAYMENT_FAILED"; amount: string; currency: string; providerPaymentId?: string };
-export type PaymentIntentInput = { orderId: string; amount: string; currency: string; idempotencyKey: string };
+export type VerifiedPaymentEvent = { eventId: string; paymentId: string; eventType: "PAYMENT_PAID" | "PAYMENT_FAILED"; amount: string; currency: string; providerPaymentId?: string; providerConfirmedInstallmentCount?: InstallmentCount };
+export type PaymentIntentInput = { orderId: string; amount: string; currency: string; idempotencyKey: string; selectedInstallmentCount?: InstallmentCount };
 export type ObservedProviderPaymentStatus = "SUCCEEDED" | "PENDING" | "FAILED" | "UNKNOWN";
-export type ObservedProviderPayment = { status: ObservedProviderPaymentStatus; providerPaymentId?: string; amount?: string; currency?: string; orderId?: string; observedAt?: Date };
+export type ObservedProviderPayment = { status: ObservedProviderPaymentStatus; providerPaymentId?: string; amount?: string; currency?: string; orderId?: string; observedAt?: Date; providerConfirmedInstallmentCount?: InstallmentCount };
 // Implemented by a real provider integration when it can supply an authoritative status lookup.
 // Reconciliation accepts this capability by injection; it does not invent provider truth.
 export interface PaymentProviderStatusLookup { getPaymentStatus(providerPaymentId: string): Promise<ObservedProviderPayment>; }

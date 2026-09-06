@@ -19,3 +19,4 @@ export function paymentProviderMatches(storedProvider: string, eventProvider: st
 }
 
 export type { MarketplacePaymentAdapter, PaymentIntentInput, ObservedProviderPayment, ObservedProviderPaymentStatus, PaymentProviderStatusLookup, VerifiedPaymentEvent } from "./types";
+export { paymentIntentFromPersistedPayment } from "./provider-installment-consistency";

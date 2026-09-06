@@ -6,6 +6,7 @@ import { enqueueNotifications } from "./notifications";
 import { ensurePaidCancellationIntegrity, reconcileOrderPayouts } from "./order-orchestrator";
 import { consumeOrderReservationsForPayment, releaseOrderReservation } from "./stock-reservation";
 import { createOrGetPaymentReconciliationReview, enqueuePaymentReconciliationAlerts } from "./payment-reconciliation";
+import { parseProviderConfirmedInstallmentCount } from "./payments/provider-installment-consistency";
 
 export function isDuplicatePaymentEventConflict(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError
@@ -32,7 +33,7 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
   if (!["PAYMENT_PAID", "PAYMENT_FAILED"].includes(input.event.eventType)) throw new Error("INVALID_PAYMENT_EVENT");
   // Serialize callbacks with each other and the expiry worker before reading lifecycle/stock truth.
   await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${input.event.paymentId} FOR UPDATE`;
-  const payment = await tx.payment.findUnique({ where: { id: input.event.paymentId }, select: { id: true, orderId: true, amount: true, currency: true, status: true, provider: true, providerPaymentId: true, order: { select: { userId: true, orderNumber: true, items: { select: { sellerId: true, stockReservationState: true } } } } } });
+  const payment = await tx.payment.findUnique({ where: { id: input.event.paymentId }, select: { id: true, orderId: true, amount: true, currency: true, status: true, provider: true, providerPaymentId: true, selectedInstallmentCount: true, providerConfirmedInstallmentCount: true, order: { select: { userId: true, orderNumber: true, items: { select: { sellerId: true, stockReservationState: true } } } } } });
   if (!payment) throw new Error("PAYMENT_NOT_FOUND");
   if (!payment.amount.equals(new Prisma.Decimal(input.event.amount)) || payment.currency !== input.event.currency) throw new Error("AMOUNT_MISMATCH");
   if (!paymentProviderMatches(payment.provider, input.provider)) throw new Error("PAYMENT_MISMATCH");
@@ -43,6 +44,26 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
     return { duplicate: true };
   }
   const paymentEvent = await tx.paymentEvent.create({ data: { paymentId: payment.id, provider: input.provider, providerEventId: input.event.eventId, eventType: input.event.eventType, payloadHash: input.payloadHash } });
+  const confirmedInstallmentCount = input.event.providerConfirmedInstallmentCount === undefined
+    ? undefined
+    : parseProviderConfirmedInstallmentCount(input.event.providerConfirmedInstallmentCount);
+  const confirmationConflict = confirmedInstallmentCount !== undefined
+    && payment.providerConfirmedInstallmentCount !== null
+    && payment.providerConfirmedInstallmentCount !== confirmedInstallmentCount;
+  const installmentMismatch = confirmedInstallmentCount !== undefined
+    && payment.selectedInstallmentCount !== null
+    && payment.selectedInstallmentCount !== confirmedInstallmentCount;
+  if (confirmedInstallmentCount !== undefined && payment.providerConfirmedInstallmentCount === null) {
+    await tx.payment.update({ where: { id: payment.id }, data: { providerConfirmedInstallmentCount: confirmedInstallmentCount } });
+  }
+  if (confirmationConflict || installmentMismatch) {
+    const mismatchCategory = confirmationConflict
+      ? `PROVIDER_CONFIRMATION_CONFLICT:${payment.providerConfirmedInstallmentCount}:${confirmedInstallmentCount}`
+      : `SELECTED_PROVIDER_MISMATCH:${payment.selectedInstallmentCount}:${confirmedInstallmentCount}`;
+    const review = await createOrGetPaymentReconciliationReview(tx, { paymentId: payment.id, paymentEventId: paymentEvent.id, reason: "INSTALLMENT_COUNT_MISMATCH", terminalStatus: payment.status, mismatchCategory, priority: "CRITICAL", metadata: { signal: "INSTALLMENT_COUNT_MISMATCH", selectedInstallmentCount: payment.selectedInstallmentCount, existingProviderConfirmedInstallmentCount: payment.providerConfirmedInstallmentCount, observedProviderConfirmedInstallmentCount: confirmedInstallmentCount } });
+    if (review.created) await tx.financialAuditEvent.create({ data: { paymentId: payment.id, orderId: payment.orderId, entityType: "PAYMENT", entityId: payment.id, eventType: "INSTALLMENT_COUNT_MISMATCH", fromStatus: payment.status, toStatus: payment.status, source: `WEBHOOK_${input.provider}`, externalEventId: input.event.eventId } });
+    return { duplicate: false, latePaymentReviewRequired: false, reconciliationRequired: true, installmentMismatch: true };
+  }
   const target = input.event.eventType === "PAYMENT_PAID" ? "PAID" : "FAILED";
   const releasedBeforePaid = target === "PAID" && ["PENDING", "AUTHORIZED"].includes(payment.status) && payment.order.items.some((item) => item.stockReservationState === "RELEASED");
   const changed = releasedBeforePaid ? { count: 0 } : await tx.payment.updateMany({ where: { id: payment.id, status: { in: ["PENDING", "AUTHORIZED"] } }, data: { status: target, providerPaymentId: input.event.providerPaymentId, ...(target === "PAID" ? { paidAt: new Date() } : { failedAt: new Date() }) } });
