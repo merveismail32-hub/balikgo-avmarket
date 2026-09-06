@@ -15,7 +15,9 @@ import { revalidateOffer } from "@/app/lib/buybox";
 import { decrementForCheckout, StockTruthError } from "@/app/lib/stock-truth";
 import { InstallmentPolicyConfigError } from "@/app/lib/installment-policy";
 import { ProviderInstallmentCapabilityError } from "@/app/lib/payments/installment-capability";
-import { EffectiveInstallmentResolutionError, resolveInstallmentsForProvider } from "@/app/lib/payments/installment-resolution";
+import { EffectiveInstallmentResolutionError } from "@/app/lib/payments/installment-resolution";
+import { resolveCheckoutCommercialInstallments } from "@/app/lib/payments/commercial-installment-resolution";
+import { CommercialPolicyError } from "@/app/lib/installment-commercial-policy";
 
 const checkoutSchema = z.object({
   clientRequestId: z.string().uuid(),
@@ -69,12 +71,28 @@ export async function POST(request: Request) {
       }
       const subtotal=total;let coupon=null;let discount=new Prisma.Decimal(0);let discounts=new Map<string,Prisma.Decimal>();
       if(requestedCouponCode){const evaluated=await evaluateCoupon(tx,{code:requestedCouponCode,userId:session.user.id,lines:items.map((item)=>{const product=productById.get(item.productId)!;return{productId:item.productId,quantity:item.quantity,product:{sellerId:product.sellerOffer!.sellerId,price:product.sellerOffer!.price}}})});coupon=evaluated.coupon;discount=evaluated.discount;discounts=evaluated.discounts;total=subtotal.minus(discount);}
-      const installment = resolveInstallmentsForProvider({ configuredAllowedInstallments: process.env.MARKETPLACE_ALLOWED_INSTALLMENTS, provider: "TEST", requestedInstallmentCount });
+      const installmentDecision = await resolveCheckoutCommercialInstallments({
+        lines: items.map((item) => {
+          const product = productById.get(item.productId)!;
+          const offer = product.sellerOffer!;
+          return {
+            sellerId: offer.sellerId,
+            categoryId: offer.catalogProduct.categoryId,
+            sellerOfferId: offer.id,
+            eligibleAmount: offer.price.mul(item.quantity).minus(discounts.get(product.id) ?? 0),
+          };
+        }),
+        effectiveAt: orderEffectiveAt,
+        provider: "TEST",
+        requestedInstallmentCount,
+        legalConstraint: { status: "UNKNOWN" },
+      }, tx);
+      const installment = installmentDecision.resolution;
       const orderNumber = `BG-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
       const orderItemSnapshots = await Promise.all(items.map(async (item) => { const product = productById.get(item.productId)!;const offer=product.sellerOffer!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const { money, provenance } = await commissionForCheckoutLine({ sellerId: offer.sellerId, categoryId: offer.catalogProduct.categoryId, effectiveAt: orderEffectiveAt, grossAmount: offer.price.mul(item.quantity).minus(itemDiscount) }, tx); return { productId: product.id, catalogProductId: offer.catalogProductId, sellerOfferId: offer.id, sellerId: offer.sellerId, productName: product.name, productSku: offer.sellerSku, productImageUrl: product.imageUrl, unitPrice: offer.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, ...provenance, stockReservationState: "RESERVED" as const, statusHistory: { create: { toStatus: "NEW" as const } } }; }));
       const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, createdAt: orderEffectiveAt, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: orderItemSnapshots } }, include: internalIncludes });
       if(coupon){const claimed=await tx.coupon.updateMany({where:{id:coupon.id,active:true,usageCount:coupon.usageCount},data:{usageCount:{increment:1}}});if(!claimed.count)throw new Error("Kupon kullanım limiti eşzamanlı olarak doldu.");await tx.couponRedemption.create({data:{couponId:coupon.id,userId:session.user.id,orderId:created.id,discountAmount:discount}});}
-      await tx.payment.create({ data: { orderId: created.id, amount: created.totalAmount, provider: "TEST_PENDING", idempotencyKey: `order:${clientRequestId}:payment`, status: "PENDING", reservationExpiresAt, selectedInstallmentCount: installment.selectedInstallmentCount, installmentPolicySource: installment.commercialProvenance.source, installmentPolicyReference: installment.commercialProvenance.sourceReference, installmentPolicyVersion: installment.commercialProvenance.policyVersion, installmentProvider: installment.providerProvenance.provider, installmentProviderCapabilitySource: installment.providerProvenance.source, installmentProviderCapabilityReference: installment.providerProvenance.sourceReference, metadata: { note: "Gerçek ödeme sağlayıcısı bağlanmadı." } } });
+      await tx.payment.create({ data: { orderId: created.id, amount: created.totalAmount, provider: "TEST_PENDING", idempotencyKey: `order:${clientRequestId}:payment`, status: "PENDING", reservationExpiresAt, selectedInstallmentCount: installment.selectedInstallmentCount, installmentPolicySource: installment.commercialProvenance.source, installmentPolicyReference: installment.commercialProvenance.sourceReference, installmentPolicyVersion: installment.commercialProvenance.policyVersion, installmentProvider: installment.providerProvenance.provider, installmentProviderCapabilitySource: installment.providerProvenance.source, installmentProviderCapabilityReference: installment.providerProvenance.sourceReference, installmentCommercialSnapshot: installmentDecision.internalSnapshot, metadata: { note: "Gerçek ödeme sağlayıcısı bağlanmadı." } } });
       for (const orderItem of created.items) {
         const grossAmount = orderItem.unitPrice.mul(orderItem.quantity).minus(orderItem.discountAmount);
         const payout = await tx.sellerPayout.create({ data: { sellerId: orderItem.sellerId, orderId: created.id, orderItemId: orderItem.id, grossAmount, commissionAmount: orderItem.commissionAmount ?? 0, providerFeeAmount: 0, netAmount: orderItem.sellerNetAmount ?? grossAmount.minus(orderItem.commissionAmount ?? 0), status: "PENDING" } });
@@ -86,13 +104,13 @@ export async function POST(request: Request) {
       await tx.cartItem.deleteMany({ where: { userId: session.user.id, productId: { in: items.map((item) => item.productId) } } });
       await enqueueNotifications(tx, [{ userId: session.user.id, orderId: created.id, type: "ORDER_CREATED", dedupeKey: `order-created:${created.id}:customer`, title: "Siparişiniz alındı", message: `${created.orderNumber} numaralı siparişiniz oluşturuldu. Ödeme henüz bekliyor.` }]);
       return { id: created.id, orderNumber: created.orderNumber };
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     return NextResponse.json(order, { status: 201 });
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : "Sipariş oluşturulamadı.";
     const prismaError = reason as { code?: string; meta?: unknown };
     console.error("[orders] Sipariş oluşturma hatası", { message, code: prismaError.code, meta: prismaError.meta });
-    const serverPolicyFailure = reason instanceof InstallmentPolicyConfigError || reason instanceof ProviderInstallmentCapabilityError;
+    const serverPolicyFailure = reason instanceof InstallmentPolicyConfigError || reason instanceof ProviderInstallmentCapabilityError || reason instanceof CommercialPolicyError;
     const safeMessage = /stok|satışta değil|kupon|sepet tutarı/i.test(message) ? message : "Sipariş işlemi tamamlanamadı. Lütfen tekrar deneyin.";
     return NextResponse.json({ error: safeMessage }, { status: serverPolicyFailure ? 500 : 409 });
   }

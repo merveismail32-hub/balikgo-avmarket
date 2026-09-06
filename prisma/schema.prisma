@@ -19,6 +19,32 @@ enum SellerStatus {
   SUSPENDED
 }
 
+enum SellerInstallmentAuthorizationMode {
+  DISABLED
+  REQUEST_ONLY
+  DELEGATED
+}
+
+enum SellerInstallmentRequestStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum SellerInstallmentRequestScope {
+  SELLER
+  SELLER_OFFER
+}
+
+enum InstallmentCommercialPolicyScope {
+  GLOBAL
+  SELLER
+  CATEGORY
+  SELLER_CATEGORY
+  SELLER_OFFER
+}
+
 enum SellerOnboardingStatus {
   DRAFT
   SUBMITTED
@@ -238,32 +264,37 @@ enum StockReleaseReason {
 }
 
 model User {
-  id                                   String                          @id @default(cuid())
+  id                                   String                             @id @default(cuid())
   name                                 String
   surname                              String
-  email                                String                          @unique
+  email                                String                             @unique
   phone                                String
   passwordHash                         String
-  role                                 UserRole                        @default(CUSTOMER)
-  financialIdentityReviewerEnabled     Boolean                         @default(false)
+  role                                 UserRole                           @default(CUSTOMER)
+  financialIdentityReviewerEnabled     Boolean                            @default(false)
   sellerProfile                        SellerProfile?
   cartItems                            CartItem[]
   favorites                            Favorite[]
   orders                               Order[]
   orderStatusChanges                   OrderStatusHistory[]
-  refundsRequested                     Refund[]                        @relation("RefundRequester")
+  refundsRequested                     Refund[]                           @relation("RefundRequester")
   financialAudits                      FinancialAuditEvent[]
   notifications                        Notification[]
   reviews                              Review[]
   couponRedemptions                    CouponRedemption[]
   adminAudits                          AdminAuditLog[]
   sellerOnboardingEvents               SellerOnboardingEvent[]
-  sellerOnboardingReviews              SellerProfile[]                 @relation("SellerOnboardingReviewer")
-  paymentReconciliationReviewsResolved PaymentReconciliationReview[]   @relation("PaymentReconciliationResolver")
-  taxVerificationReviews               TaxVerification[]               @relation("TaxVerificationReviewer")
-  financialVerificationEvidenceReviews FinancialVerificationEvidence[] @relation("FinancialVerificationEvidenceReviewer")
-  createdAt                            DateTime                        @default(now())
-  updatedAt                            DateTime                        @updatedAt
+  sellerOnboardingReviews              SellerProfile[]                    @relation("SellerOnboardingReviewer")
+  paymentReconciliationReviewsResolved PaymentReconciliationReview[]      @relation("PaymentReconciliationResolver")
+  taxVerificationReviews               TaxVerification[]                  @relation("TaxVerificationReviewer")
+  financialVerificationEvidenceReviews FinancialVerificationEvidence[]    @relation("FinancialVerificationEvidenceReviewer")
+  sellerInstallmentControlAudits       SellerInstallmentControlAudit[]
+  sellerInstallmentRequestDecisions    SellerInstallmentRequest[]         @relation("SellerInstallmentRequestDecider")
+  sellerInstallmentRequestAudits       SellerInstallmentRequestAudit[]
+  installmentPoliciesCreated           InstallmentCommercialPolicy[]      @relation("InstallmentPolicyCreator")
+  installmentPolicyAudits              InstallmentCommercialPolicyAudit[]
+  createdAt                            DateTime                           @default(now())
+  updatedAt                            DateTime                           @updatedAt
 }
 
 model SellerProfile {
@@ -313,11 +344,158 @@ model SellerProfile {
   taxVerifications              TaxVerification[]
   financialVerificationEvidence FinancialVerificationEvidence[]
   categoryCommissionAgreements  SellerCategoryCommissionAgreement[]
+  installmentControl            SellerInstallmentControl?
+  installmentControlAudits      SellerInstallmentControlAudit[]
+  installmentRequests           SellerInstallmentRequest[]
+  installmentRequestAudits      SellerInstallmentRequestAudit[]
+  installmentPolicies           InstallmentCommercialPolicy[]
   createdAt                     DateTime                            @default(now())
   updatedAt                     DateTime                            @updatedAt
 
   @@index([onboardingStatus, createdAt])
   @@index([reviewerUserId])
+}
+
+model SellerInstallmentControl {
+  id                                  String                             @id @default(cuid())
+  sellerId                            String                             @unique(map: "SellerInstallmentControl_seller_key")
+  authorizationMode                   SellerInstallmentAuthorizationMode @default(DISABLED)
+  delegatedAllowedInstallments        Json                               @default("[1]")
+  participationEnabled                Boolean                            @default(false)
+  sellerPreferenceAllowedInstallments Json                               @default("[1]")
+  version                             Int                                @default(1)
+  createdAt                           DateTime                           @default(now())
+  updatedAt                           DateTime                           @updatedAt
+  seller                              SellerProfile                      @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "SellerInstallmentControl_sellerId_fkey")
+  audits                              SellerInstallmentControlAudit[]
+  approvedRequests                    SellerInstallmentRequest[]
+}
+
+model SellerInstallmentControlAudit {
+  id              String                   @id @default(cuid())
+  controlId       String
+  sellerId        String
+  actorUserId     String
+  actorRole       UserRole
+  action          String                   @db.VarChar(80)
+  previousState   Json?
+  newState        Json
+  expectedVersion Int?
+  previousVersion Int?
+  newVersion      Int
+  reason          String                   @db.VarChar(500)
+  createdAt       DateTime                 @default(now())
+  control         SellerInstallmentControl @relation(fields: [controlId], references: [id], onDelete: Restrict, map: "SellerInstallmentControlAudit_controlId_fkey")
+  seller          SellerProfile            @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "SellerInstallmentControlAudit_sellerId_fkey")
+  actor           User                     @relation(fields: [actorUserId], references: [id], onDelete: Restrict, map: "SellerInstallmentControlAudit_actorUserId_fkey")
+
+  @@index([sellerId, createdAt], map: "SellerInstallmentControlAudit_seller_created_idx")
+  @@index([controlId, newVersion], map: "SellerInstallmentControlAudit_control_version_idx")
+  @@index([actorUserId, createdAt], map: "SellerInstallmentControlAudit_actor_created_idx")
+}
+
+model SellerInstallmentRequest {
+  id                           String                          @id @default(cuid())
+  sellerId                     String
+  scopeType                    SellerInstallmentRequestScope
+  sellerOfferId                String?
+  activeScopeKey               String?                         @unique(map: "SellerInstallmentRequest_active_scope_key") @db.VarChar(191)
+  requestedAllowedInstallments Json
+  status                       SellerInstallmentRequestStatus  @default(SUBMITTED)
+  sellerReason                 String                          @db.VarChar(500)
+  version                      Int                             @default(1)
+  approvedAllowedInstallments  Json?
+  decidedByUserId              String?
+  decidedAt                    DateTime?
+  decisionReason               String?                         @db.VarChar(500)
+  approvedControlId            String?
+  approvedControlVersion       Int?
+  createdAt                    DateTime                        @default(now())
+  updatedAt                    DateTime                        @updatedAt
+  seller                       SellerProfile                   @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequest_sellerId_fkey")
+  sellerOffer                  SellerOffer?                    @relation(fields: [sellerOfferId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequest_sellerOfferId_fkey")
+  decidedBy                    User?                           @relation("SellerInstallmentRequestDecider", fields: [decidedByUserId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequest_decidedByUserId_fkey")
+  approvedControl              SellerInstallmentControl?       @relation(fields: [approvedControlId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequest_approvedControlId_fkey")
+  audits                       SellerInstallmentRequestAudit[]
+  derivedPolicies              InstallmentCommercialPolicy[]
+
+  @@index([sellerId, status, createdAt], map: "SellerInstallmentRequest_seller_status_idx")
+  @@index([sellerOfferId, status, createdAt], map: "SellerInstallmentRequest_offer_status_idx")
+}
+
+model InstallmentCommercialPolicy {
+  id                    String                             @id @default(cuid())
+  scopeType             InstallmentCommercialPolicyScope
+  scopeKey              String                             @db.VarChar(191)
+  sellerId              String?
+  categoryId            String?
+  sellerOfferId         String?
+  allowedInstallments   Json
+  minimumEligibleAmount Decimal                            @db.Decimal(12, 2)
+  maximumEligibleAmount Decimal?                           @db.Decimal(12, 2)
+  effectiveFrom         DateTime
+  effectiveUntil        DateTime?
+  version               Int                                @default(1)
+  approvedFromRequestId String?
+  reason                String                             @db.VarChar(500)
+  createdByUserId       String
+  createdAt             DateTime                           @default(now())
+  updatedAt             DateTime                           @updatedAt
+  seller                SellerProfile?                     @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  category              Category?                          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  sellerOffer           SellerOffer?                       @relation(fields: [sellerOfferId], references: [id], onDelete: Restrict)
+  approvedFromRequest   SellerInstallmentRequest?          @relation(fields: [approvedFromRequestId], references: [id], onDelete: Restrict)
+  createdBy             User                               @relation("InstallmentPolicyCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  audits                InstallmentCommercialPolicyAudit[]
+
+  @@index([scopeKey, effectiveFrom, effectiveUntil], map: "InstallmentCommercialPolicy_scope_window_idx")
+  @@index([scopeKey, minimumEligibleAmount, maximumEligibleAmount], map: "InstallmentCommercialPolicy_scope_amount_idx")
+  @@index([sellerId, effectiveFrom], map: "InstallmentCommercialPolicy_seller_effective_idx")
+}
+
+model InstallmentCommercialPolicyAudit {
+  id              String                      @id @default(cuid())
+  policyId        String
+  actorUserId     String
+  actorRole       UserRole
+  action          String                      @db.VarChar(80)
+  previousState   Json?
+  newState        Json
+  expectedVersion Int?
+  previousVersion Int?
+  newVersion      Int
+  reason          String                      @db.VarChar(500)
+  createdAt       DateTime                    @default(now())
+  policy          InstallmentCommercialPolicy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  actor           User                        @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([policyId, newVersion])
+  @@index([actorUserId, createdAt])
+  @@index([createdAt, id], map: "InstallmentCommercialPolicyAudit_created_id_idx")
+}
+
+model SellerInstallmentRequestAudit {
+  id              String                          @id @default(cuid())
+  requestId       String
+  sellerId        String
+  actorUserId     String
+  actorRole       UserRole
+  action          String                          @db.VarChar(80)
+  previousStatus  SellerInstallmentRequestStatus?
+  newStatus       SellerInstallmentRequestStatus
+  requestedSet    Json
+  approvedSet     Json?
+  expectedVersion Int?
+  previousVersion Int?
+  newVersion      Int
+  reason          String                          @db.VarChar(500)
+  createdAt       DateTime                        @default(now())
+  request         SellerInstallmentRequest        @relation(fields: [requestId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequestAudit_requestId_fkey")
+  seller          SellerProfile                   @relation(fields: [sellerId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequestAudit_sellerId_fkey")
+  actor           User                            @relation(fields: [actorUserId], references: [id], onDelete: Restrict, map: "SellerInstallmentRequestAudit_actorUserId_fkey")
+
+  @@index([requestId, newVersion], map: "SellerInstallmentRequestAudit_request_version_idx")
+  @@index([sellerId, createdAt], map: "SellerInstallmentRequestAudit_seller_created_idx")
 }
 
 model SellerFinancialIdentity {
@@ -519,31 +697,33 @@ model CatalogProduct {
 }
 
 model SellerOffer {
-  id               String               @id @default(cuid())
-  sellerId         String
-  catalogProductId String
-  legacyProductId  String?              @unique
-  sellerSku        String?              @db.VarChar(80)
-  price            Decimal              @db.Decimal(12, 2)
-  listPrice        Decimal?             @db.Decimal(12, 2)
-  stock            Int                  @default(0)
-  inventoryVersion Int                  @default(0)
-  active           Boolean              @default(true)
-  handlingTimeDays Int                  @default(0)
-  source           String?              @db.VarChar(50)
-  externalSourceId String?              @db.VarChar(191)
-  matchStatus      CatalogMatchStatus?
-  matchReason      String?              @db.VarChar(100)
-  matchConfidence  Decimal?             @db.Decimal(5, 4)
-  seller           SellerProfile        @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct   CatalogProduct       @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
-  legacyProduct    Product?             @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
-  cartItems        CartItem[]
-  orderItems       OrderItem[]
-  matchReviews     CatalogMatchReview[]
-  stockMovements   StockMovement[]
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  id                  String                        @id @default(cuid())
+  sellerId            String
+  catalogProductId    String
+  legacyProductId     String?                       @unique
+  sellerSku           String?                       @db.VarChar(80)
+  price               Decimal                       @db.Decimal(12, 2)
+  listPrice           Decimal?                      @db.Decimal(12, 2)
+  stock               Int                           @default(0)
+  inventoryVersion    Int                           @default(0)
+  active              Boolean                       @default(true)
+  handlingTimeDays    Int                           @default(0)
+  source              String?                       @db.VarChar(50)
+  externalSourceId    String?                       @db.VarChar(191)
+  matchStatus         CatalogMatchStatus?
+  matchReason         String?                       @db.VarChar(100)
+  matchConfidence     Decimal?                      @db.Decimal(5, 4)
+  seller              SellerProfile                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct      CatalogProduct                @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  legacyProduct       Product?                      @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
+  cartItems           CartItem[]
+  orderItems          OrderItem[]
+  matchReviews        CatalogMatchReview[]
+  stockMovements      StockMovement[]
+  installmentRequests SellerInstallmentRequest[]
+  installmentPolicies InstallmentCommercialPolicy[]
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
 
   @@unique([sellerId, catalogProductId])
   @@unique([sellerId, sellerSku])
@@ -766,6 +946,7 @@ model Payment {
   installmentProvider                    String?                       @db.VarChar(40)
   installmentProviderCapabilitySource    String?                       @db.VarChar(60)
   installmentProviderCapabilityReference String?                       @db.VarChar(120)
+  installmentCommercialSnapshot          Json?
   providerConfirmedInstallmentCount      Int?
   paidAt                                 DateTime?
   failedAt                               DateTime?
@@ -1053,6 +1234,7 @@ model Category {
   products             Product[]
   catalogProducts      CatalogProduct[]
   commissionAgreements SellerCategoryCommissionAgreement[]
+  installmentPolicies  InstallmentCommercialPolicy[]
   createdAt            DateTime                            @default(now())
   updatedAt            DateTime                            @updatedAt
 

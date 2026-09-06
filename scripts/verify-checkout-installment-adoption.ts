@@ -11,12 +11,13 @@ const schema = readFileSync(resolve(root, "prisma/schema.prisma"), "utf8");
 const migration = readFileSync(resolve(root, "prisma/migrations/20260906120000_payment_installment_snapshot/migration.sql"), "utf8");
 
 assert.match(checkout, /requestedInstallmentCount:\s*z\.union\(\[z\.literal\(1\), z\.literal\(3\), z\.literal\(6\), z\.literal\(9\)\]\)\.optional\(\)/);
-assert.equal((checkout.match(/resolveInstallmentsForProvider\(/g) ?? []).length, 1, "checkout must resolve installments once");
-assert.match(checkout, /resolveInstallmentsForProvider[\s\S]*tx\.order\.create[\s\S]*tx\.payment\.create/);
-assert.doesNotMatch(checkout, /resolveInstallmentsForProvider\(\{[^}]*sellerId|resolveInstallmentsForProvider\(\{[^}]*categoryId/, "installment authority must remain order-level for multi-seller orders");
+assert.equal((checkout.match(/resolveCheckoutCommercialInstallments\(/g) ?? []).length, 1, "checkout must resolve installments once");
+assert.match(checkout, /resolveCheckoutCommercialInstallments[\s\S]*tx\.order\.create[\s\S]*tx\.payment\.create/);
+assert.doesNotMatch(checkout, /sellerId:\s*parsed\.data|categoryId:\s*parsed\.data/, "commercial scope must come from persisted offers");
 assert.match(checkout, /selectedInstallmentCount:\s*installment\.selectedInstallmentCount/);
 assert.match(checkout, /installmentPolicySource:\s*installment\.commercialProvenance\.source/);
 assert.match(checkout, /installmentProviderCapabilityReference:\s*installment\.providerProvenance\.sourceReference/);
+assert.match(checkout, /installmentCommercialSnapshot:\s*installmentDecision\.internalSnapshot/);
 assert.doesNotMatch(checkout, /providerSupported\s*:\s*parsed\.data|commercialProvenance\s*:\s*parsed\.data/);
 assert.match(schema, /selectedInstallmentCount\s+Int\?/);
 assert.match(migration, /"selectedInstallmentCount" IN \(1, 3, 6, 9\)/);

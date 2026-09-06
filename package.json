@@ -71,6 +71,16 @@
     "test:effective-installment-resolution": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-effective-installment-resolution.ts",
     "test:checkout-installment-adoption": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-checkout-installment-adoption.ts",
     "test:provider-installment-consistency": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-provider-installment-consistency.ts",
+    "test:seller-installment-control": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-seller-installment-control.ts",
+    "test:seller-installment-control-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-seller-installment-control-db-e2e.ts",
+    "test:seller-installment-request": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-seller-installment-request.ts",
+    "test:seller-installment-request-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-seller-installment-request-db-e2e.ts",
+    "test:installment-commercial-policy": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-installment-commercial-policy.ts",
+    "test:installment-commercial-policy-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-installment-commercial-policy-db-e2e.ts",
+    "test:commercial-installment-resolution": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-commercial-installment-resolution.ts",
+    "test:commercial-installment-checkout-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-commercial-installment-checkout-db-e2e.ts",
+    "test:installment-read-model": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-installment-read-model.ts",
+    "test:installment-read-model-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-installment-read-model-db-e2e.ts",
     "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {
