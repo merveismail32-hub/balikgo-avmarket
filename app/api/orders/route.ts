@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { prisma } from "@/app/lib/prisma";
-import { commissionFor, commissionRateForSeller } from "@/app/lib/commission";
+import { commissionForCheckoutLine } from "@/app/lib/checkout-commission-policy";
 import { enqueueNotifications } from "@/app/lib/notifications";
 import { publicProductPolicy } from "@/app/lib/product-visibility";
 import { normalizeCouponCode } from "@/app/lib/coupon";
@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     const duplicate = await prisma.order.findUnique({ where: { clientRequestId }, select: { id: true, orderNumber: true } });
     if (duplicate) return NextResponse.json(duplicate);
     const order = await prisma.$transaction(async (tx) => {
+      const orderEffectiveAt = new Date();
       const reservationExpiresAt = new Date(Date.now() + 15 * 60_000);
       for (const item of items) await ensureCatalogForProduct(tx, item.productId);
       const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) }, ...publicProductPolicy }, include: { seller: true, sellerOffer: { include: { seller: true, catalogProduct: true } } } });
@@ -58,7 +59,8 @@ export async function POST(request: Request) {
       const subtotal=total;let coupon=null;let discount=new Prisma.Decimal(0);let discounts=new Map<string,Prisma.Decimal>();
       if(requestedCouponCode){const evaluated=await evaluateCoupon(tx,{code:requestedCouponCode,userId:session.user.id,lines:items.map((item)=>{const product=productById.get(item.productId)!;return{productId:item.productId,quantity:item.quantity,product:{sellerId:product.sellerOffer!.sellerId,price:product.sellerOffer!.price}}})});coupon=evaluated.coupon;discount=evaluated.discount;discounts=evaluated.discounts;total=subtotal.minus(discount);}
       const orderNumber = `BG-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: items.map((item) => { const product = productById.get(item.productId)!;const offer=product.sellerOffer!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const money = commissionFor(offer.price.mul(item.quantity).minus(itemDiscount),1, commissionRateForSeller(product.sellerId)); return { productId: product.id, catalogProductId: product.catalogProductId, sellerOfferId: offer.id, sellerId: product.sellerId, productName: product.name, productSku: offer.sellerSku, productImageUrl: product.imageUrl, unitPrice: offer.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, stockReservationState: "RESERVED", statusHistory: { create: { toStatus: "NEW" } } }; }) } }, include: internalIncludes });
+      const orderItemSnapshots = await Promise.all(items.map(async (item) => { const product = productById.get(item.productId)!;const offer=product.sellerOffer!;const itemDiscount=discounts.get(product.id)??new Prisma.Decimal(0); const { money, provenance } = await commissionForCheckoutLine({ sellerId: offer.sellerId, categoryId: offer.catalogProduct.categoryId, effectiveAt: orderEffectiveAt, grossAmount: offer.price.mul(item.quantity).minus(itemDiscount) }, tx); return { productId: product.id, catalogProductId: offer.catalogProductId, sellerOfferId: offer.id, sellerId: offer.sellerId, productName: product.name, productSku: offer.sellerSku, productImageUrl: product.imageUrl, unitPrice: offer.price, quantity: item.quantity,discountAmount:itemDiscount, commissionRate: money.rate, commissionAmount: money.commission, sellerNetAmount: money.net, ...provenance, stockReservationState: "RESERVED" as const, statusHistory: { create: { toStatus: "NEW" as const } } }; }));
+      const created = await tx.order.create({ data: { userId: session.user.id, clientRequestId, orderNumber, createdAt: orderEffectiveAt, subtotalAmount:subtotal,discountAmount:discount,couponId:coupon?.id,couponCode:coupon?.code,totalAmount: total, ...address, items: { create: orderItemSnapshots } }, include: internalIncludes });
       if(coupon){const claimed=await tx.coupon.updateMany({where:{id:coupon.id,active:true,usageCount:coupon.usageCount},data:{usageCount:{increment:1}}});if(!claimed.count)throw new Error("Kupon kullanım limiti eşzamanlı olarak doldu.");await tx.couponRedemption.create({data:{couponId:coupon.id,userId:session.user.id,orderId:created.id,discountAmount:discount}});}
       await tx.payment.create({ data: { orderId: created.id, amount: created.totalAmount, provider: "TEST_PENDING", idempotencyKey: `order:${clientRequestId}:payment`, status: "PENDING", reservationExpiresAt, metadata: { note: "Gerçek ödeme sağlayıcısı bağlanmadı." } } });
       for (const orderItem of created.items) {

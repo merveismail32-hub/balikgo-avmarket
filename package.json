@@ -61,6 +61,12 @@
     "test:provider-trust-boundary": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-provider-trust-boundary.ts",
     "test:cross-domain-trust-hardening": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-cross-domain-trust-hardening.ts",
     "test:safe-trust-read-model": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-safe-trust-read-model.ts",
+    "test:commission-policy-selection": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-commission-policy-selection.ts",
+    "test:commission-agreements": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-seller-category-commission-agreements.ts",
+    "test:commission-agreements-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-seller-category-commission-agreements-db-e2e.ts",
+    "test:commission-policy-resolution": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-commission-policy-resolution.ts",
+    "test:checkout-commission-adoption": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-checkout-commission-adoption.ts",
+    "test:commission-policy-provenance": "node --experimental-strip-types scripts/verify-commission-policy-provenance.ts",
     "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {
