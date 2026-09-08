@@ -11,6 +11,7 @@ assert(resolveBuybox(catalog, [offer("suspended", { sellerStatus: "SUSPENDED" })
 assert(resolveBuybox({ ...catalog, active: false }, [offer("one")]).winner === null, "E: inactive catalog produced a winner.");
 assert(getOfferEligibility(catalog, offer("invalid", { price: 0 })).includes("INVALID_PRICE"), "F: invalid price was eligible.");
 assert(resolveBuybox(catalog, [offer("single")]).winner?.id === "single", "G: single offer failed.");
+assert(resolveBuybox(catalog, [offer("held", { priceAnomalyHeld: true }), offer("publishable")]).winner?.id === "publishable", "G2: held offer entered Buybox.");
 const tied = [offer("z"), offer("a")]; assert(resolveBuybox(catalog, tied).winner?.id === "a" && resolveBuybox(catalog, tied).winner?.id === "a", "H: tie-break is not stable.");
 const depleted = offer("first", { stock: 1, price: 90 }); const fallback = offer("fallback", { price: 110 }); assert(resolveBuybox(catalog, [depleted, fallback]).winner?.id === "first", "I: fixture winner invalid."); depleted.stock = 0; assert(resolveBuybox(catalog, [depleted, fallback]).winner?.id === "fallback", "I: depletion did not promote fallback.");
 const deactivated = offer("deactivated", { price: 90, active: false }); assert(resolveBuybox(catalog, [deactivated, fallback]).winner?.id === "fallback", "J: deactivation did not promote fallback.");

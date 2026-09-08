@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { isSellerOfferPublicationEligible, publishableSellerOfferPolicy } from "./offer-publication-eligibility";
 import { formatPrice, type Product } from "./products";
 import { resolveBuybox, type SellerPerformance } from "./buybox";
 
@@ -12,25 +13,26 @@ export const publicCatalogPolicy: Prisma.CatalogProductWhereInput = {
     { OR: [{ categoryId: null }, { categoryRecord: { active: true } }] },
     { OR: [{ brandId: null }, { brandRecord: { active: true } }] },
   ],
-  offers: { some: { active: true, price: { gt: 0 }, seller: { status: "APPROVED" } } },
+  offers: { some: { active: true, priceAnomalyHeld: false, price: { gt: 0 }, seller: { status: "APPROVED" } } },
 };
 
 export const eligibleOfferPolicy: Prisma.SellerOfferWhereInput = {
   active: true,
+  ...publishableSellerOfferPolicy,
   stock: { gt: 0 },
   seller: { status: "APPROVED" },
   catalogProduct: { active: true, moderationStatus: "APPROVED" },
 };
 
-export function isOfferEligible(input: { active: boolean; stock: number; seller: { status: string }; catalogProduct?: { active: boolean; moderationStatus: string } }) {
-  return input.active && input.stock > 0 && input.seller.status === "APPROVED" && (!input.catalogProduct || (input.catalogProduct.active && input.catalogProduct.moderationStatus === "APPROVED"));
+export function isOfferEligible(input: { active: boolean; priceAnomalyHeld?: boolean; stock: number; seller: { status: string }; catalogProduct?: { active: boolean; moderationStatus: string } }) {
+  return input.active && isSellerOfferPublicationEligible(input) && input.stock > 0 && input.seller.status === "APPROVED" && (!input.catalogProduct || (input.catalogProduct.active && input.catalogProduct.moderationStatus === "APPROVED"));
 }
 
 const catalogInclude = {
   categoryRecord: true,
   brandRecord: true,
   offers: {
-    where: { active: true, price: { gt: 0 }, seller: { status: "APPROVED" } },
+    where: { active: true, priceAnomalyHeld: false, price: { gt: 0 }, seller: { status: "APPROVED" } },
     include: { seller: true, legacyProduct: true },
     orderBy: [{ price: "asc" as const }, { createdAt: "asc" as const }],
   },
@@ -124,7 +126,7 @@ export async function listPublicCatalog(input: CatalogListFilters = {}) {
       { category: { contains: input.q, mode: "insensitive" } }, { model: { contains: input.q, mode: "insensitive" } },
       { barcode: { contains: input.q } }, { offers: { some: { sellerSku: { contains: input.q, mode: "insensitive" } } } },
     ] } : {}),
-    ...((input.inStock || Object.keys(offerPrice).length) ? { offers: { some: { active: true, stock: { gt: 0 }, price: { gt: 0 }, seller: { status: "APPROVED" }, ...offerPrice } } } : {}),
+    ...((input.inStock || Object.keys(offerPrice).length) ? { offers: { some: { active: true, priceAnomalyHeld: false, stock: { gt: 0 }, price: { gt: 0 }, seller: { status: "APPROVED" }, ...offerPrice } } } : {}),
   };
   const priceSort = input.sort === "price_asc" || input.sort === "price_desc";
   const skip = input.skip ?? 0; const take = input.take ?? 2_147_483_647;

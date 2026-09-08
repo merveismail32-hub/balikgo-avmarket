@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { createSellerOfferWithPriceEvidence } from "./seller-offer-price";
 
 export async function ensureCatalogForProduct(tx: Prisma.TransactionClient, productId: string) {
   const product = await tx.product.findUnique({ where: { id: productId }, include: { sellerOffer: true } });
@@ -15,6 +16,6 @@ export async function ensureCatalogForProduct(tx: Prisma.TransactionClient, prod
   if (!product.catalogProductId) await tx.product.update({ where: { id: product.id }, data: { catalogProductId: catalog.id } });
   // A missing legacy offer is quarantined at zero stock. Product.stock is not an
   // inventory authority; guarded backfill/import tooling must establish offer stock.
-  const offer = product.sellerOffer ?? await tx.sellerOffer.create({ data: { sellerId: product.sellerId, catalogProductId: catalog.id, legacyProductId: product.id, sellerSku: product.sku, price: product.price, listPrice: product.oldPrice, stock: 0, active: product.active, createdAt: product.createdAt } });
+  const offer = product.sellerOffer ?? await createSellerOfferWithPriceEvidence(tx, { data: { sellerId: product.sellerId, catalogProductId: catalog.id, legacyProductId: product.id, sellerSku: product.sku, price: product.price, listPrice: product.oldPrice, stock: 0, active: product.active, createdAt: product.createdAt }, source: "LEGACY_CATALOG_SYNC" });
   return { catalogProductId: catalog.id, sellerOfferId: offer.id };
 }

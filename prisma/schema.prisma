@@ -283,6 +283,7 @@ model User {
   reviews                              Review[]
   couponRedemptions                    CouponRedemption[]
   adminAudits                          AdminAuditLog[]
+  adminPriceInterventions              AdminPriceIntervention[]
   sellerOnboardingEvents               SellerOnboardingEvent[]
   sellerOnboardingReviews              SellerProfile[]                    @relation("SellerOnboardingReviewer")
   paymentReconciliationReviewsResolved PaymentReconciliationReview[]      @relation("PaymentReconciliationResolver")
@@ -293,6 +294,7 @@ model User {
   sellerInstallmentRequestAudits       SellerInstallmentRequestAudit[]
   installmentPoliciesCreated           InstallmentCommercialPolicy[]      @relation("InstallmentPolicyCreator")
   installmentPolicyAudits              InstallmentCommercialPolicyAudit[]
+  sellerOfferPriceObservations         SellerOfferPriceObservation[]      @relation("SellerOfferPriceObservationActor")
   createdAt                            DateTime                           @default(now())
   updatedAt                            DateTime                           @updatedAt
 }
@@ -332,6 +334,7 @@ model SellerProfile {
   onboardingEvents              SellerOnboardingEvent[]
   products                      Product[]
   offers                        SellerOffer[]
+  priceObservations             SellerOfferPriceObservation[]
   catalogMatchReviews           CatalogMatchReview[]
   orderItems                    OrderItem[]
   payouts                       SellerPayout[]
@@ -650,44 +653,45 @@ model Product {
 }
 
 model CatalogProduct {
-  id               String                  @id @default(cuid())
-  slug             String                  @unique
-  name             String
-  brand            String
-  category         String
-  categoryId       String?
-  brandId          String?
-  model            String?                 @db.VarChar(160)
-  barcode          String?                 @unique @db.VarChar(32)
-  normalizedGtin   String?                 @unique @db.VarChar(14)
-  normalizedName   String?                 @db.VarChar(191)
-  normalizedBrand  String?                 @db.VarChar(160)
-  normalizedModel  String?                 @db.VarChar(160)
-  variantKey       String?                 @db.VarChar(191)
-  identityKey      String?                 @unique @db.VarChar(191)
-  description      String
-  imageUrl         String
-  images           Json?
-  technicalDetails String                  @default("")
-  shippingInfo     String                  @default("")
-  badge            String                  @default("")
-  rating           Float                   @default(0)
-  reviewCount      Int                     @default(0)
-  active           Boolean                 @default(true)
-  moderationStatus ProductModerationStatus @default(APPROVED)
-  moderationReason String?                 @db.VarChar(500)
-  moderatedAt      DateTime?
-  categoryRecord   Category?               @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  brandRecord      Brand?                  @relation(fields: [brandId], references: [id], onDelete: SetNull)
-  legacyProducts   Product[]
-  offers           SellerOffer[]
-  matchReviews     CatalogMatchReview[]
-  cartItems        CartItem[]
-  favorites        Favorite[]
-  reviews          Review[]
-  orderItems       OrderItem[]
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  id                String                        @id @default(cuid())
+  slug              String                        @unique
+  name              String
+  brand             String
+  category          String
+  categoryId        String?
+  brandId           String?
+  model             String?                       @db.VarChar(160)
+  barcode           String?                       @unique @db.VarChar(32)
+  normalizedGtin    String?                       @unique @db.VarChar(14)
+  normalizedName    String?                       @db.VarChar(191)
+  normalizedBrand   String?                       @db.VarChar(160)
+  normalizedModel   String?                       @db.VarChar(160)
+  variantKey        String?                       @db.VarChar(191)
+  identityKey       String?                       @unique @db.VarChar(191)
+  description       String
+  imageUrl          String
+  images            Json?
+  technicalDetails  String                        @default("")
+  shippingInfo      String                        @default("")
+  badge             String                        @default("")
+  rating            Float                         @default(0)
+  reviewCount       Int                           @default(0)
+  active            Boolean                       @default(true)
+  moderationStatus  ProductModerationStatus       @default(APPROVED)
+  moderationReason  String?                       @db.VarChar(500)
+  moderatedAt       DateTime?
+  categoryRecord    Category?                     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brandRecord       Brand?                        @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  legacyProducts    Product[]
+  offers            SellerOffer[]
+  matchReviews      CatalogMatchReview[]
+  cartItems         CartItem[]
+  favorites         Favorite[]
+  reviews           Review[]
+  orderItems        OrderItem[]
+  priceObservations SellerOfferPriceObservation[]
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
 
   @@index([moderationStatus, active, createdAt])
   @@index([categoryId])
@@ -697,39 +701,132 @@ model CatalogProduct {
 }
 
 model SellerOffer {
-  id                  String                        @id @default(cuid())
-  sellerId            String
-  catalogProductId    String
-  legacyProductId     String?                       @unique
-  sellerSku           String?                       @db.VarChar(80)
-  price               Decimal                       @db.Decimal(12, 2)
-  listPrice           Decimal?                      @db.Decimal(12, 2)
-  stock               Int                           @default(0)
-  inventoryVersion    Int                           @default(0)
-  active              Boolean                       @default(true)
-  handlingTimeDays    Int                           @default(0)
-  source              String?                       @db.VarChar(50)
-  externalSourceId    String?                       @db.VarChar(191)
-  matchStatus         CatalogMatchStatus?
-  matchReason         String?                       @db.VarChar(100)
-  matchConfidence     Decimal?                      @db.Decimal(5, 4)
-  seller              SellerProfile                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct      CatalogProduct                @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
-  legacyProduct       Product?                      @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
-  cartItems           CartItem[]
-  orderItems          OrderItem[]
-  matchReviews        CatalogMatchReview[]
-  stockMovements      StockMovement[]
-  installmentRequests SellerInstallmentRequest[]
-  installmentPolicies InstallmentCommercialPolicy[]
-  createdAt           DateTime                      @default(now())
-  updatedAt           DateTime                      @updatedAt
+  id                      String                        @id @default(cuid())
+  sellerId                String
+  catalogProductId        String
+  legacyProductId         String?                       @unique
+  sellerSku               String?                       @db.VarChar(80)
+  price                   Decimal                       @db.Decimal(12, 2)
+  priceVersion            Int                           @default(1)
+  priceAnomalyHeld        Boolean                       @default(false)
+  listPrice               Decimal?                      @db.Decimal(12, 2)
+  stock                   Int                           @default(0)
+  inventoryVersion        Int                           @default(0)
+  active                  Boolean                       @default(true)
+  handlingTimeDays        Int                           @default(0)
+  source                  String?                       @db.VarChar(50)
+  externalSourceId        String?                       @db.VarChar(191)
+  matchStatus             CatalogMatchStatus?
+  matchReason             String?                       @db.VarChar(100)
+  matchConfidence         Decimal?                      @db.Decimal(5, 4)
+  seller                  SellerProfile                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct          CatalogProduct                @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  legacyProduct           Product?                      @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
+  cartItems               CartItem[]
+  orderItems              OrderItem[]
+  matchReviews            CatalogMatchReview[]
+  stockMovements          StockMovement[]
+  installmentRequests     SellerInstallmentRequest[]
+  installmentPolicies     InstallmentCommercialPolicy[]
+  priceObservations       SellerOfferPriceObservation[]
+  priceAnomalyHolds       SellerOfferPriceAnomalyHold[]
+  adminPriceInterventions AdminPriceIntervention[]
+  createdAt               DateTime                      @default(now())
+  updatedAt               DateTime                      @updatedAt
 
   @@unique([sellerId, catalogProductId])
+  @@unique([sellerId, id], map: "SellerOffer_seller_id_key")
   @@unique([sellerId, sellerSku])
   @@unique([sellerId, source, externalSourceId])
   @@index([catalogProductId, active, stock])
   @@index([sellerId, active, updatedAt])
+}
+
+model SellerOfferPriceAnomalyHold {
+  id                       String                          @id @default(cuid())
+  sellerOfferId            String
+  sellerId                 String
+  triggerPriceVersion      Int
+  anomalyStatus            String                          @db.VarChar(30)
+  anomalyConfidence        String                          @db.VarChar(20)
+  reasonCodes              Json
+  algorithmVersion         String                          @db.VarChar(80)
+  benchmarkSnapshot        Json
+  evaluatedAt              DateTime
+  enforcementPolicyVersion String                          @db.VarChar(80)
+  activeKey                String?                         @unique
+  createdAt                DateTime                        @default(now())
+  sellerOffer              SellerOffer                     @relation(fields: [sellerId, sellerOfferId], references: [sellerId, id], onDelete: Restrict)
+  release                  SellerOfferPriceAnomalyRelease?
+
+  @@unique([sellerOfferId, triggerPriceVersion], map: "SellerOfferPriceAnomalyHold_offer_version_key")
+  @@index([sellerId, createdAt])
+}
+
+model SellerOfferPriceAnomalyRelease {
+  id                       String                      @id @default(cuid())
+  holdId                   String                      @unique
+  sellerOfferId            String
+  releasePriceVersion      Int
+  anomalyStatus            String                      @db.VarChar(30)
+  anomalyConfidence        String                      @db.VarChar(20)
+  reasonCodes              Json
+  algorithmVersion         String                      @db.VarChar(80)
+  benchmarkSnapshot        Json
+  evaluatedAt              DateTime
+  enforcementPolicyVersion String                      @db.VarChar(80)
+  source                   String                      @default("PRICE_ANOMALY_REVALIDATION") @db.VarChar(80)
+  createdAt                DateTime                    @default(now())
+  hold                     SellerOfferPriceAnomalyHold @relation(fields: [holdId], references: [id], onDelete: Restrict)
+
+  @@index([sellerOfferId, createdAt])
+}
+
+model AdminPriceIntervention {
+  id                   String      @id @default(cuid())
+  actorUserId          String
+  actorRole            String      @db.VarChar(20)
+  sellerOfferId        String
+  sellerId             String
+  catalogProductId     String
+  previousPrice        Decimal     @db.Decimal(12, 2)
+  newPrice             Decimal     @db.Decimal(12, 2)
+  previousPriceVersion Int
+  newPriceVersion      Int
+  reason               String      @db.VarChar(500)
+  previousHoldState    Boolean
+  resultingHoldState   Boolean
+  anomalyBefore        Json?
+  anomalyAfter         Json?
+  createdAt            DateTime    @default(now())
+  actor                User        @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  sellerOffer          SellerOffer @relation(fields: [sellerId, sellerOfferId], references: [sellerId, id], onDelete: Restrict)
+
+  @@index([sellerOfferId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([sellerId, createdAt])
+}
+
+model SellerOfferPriceObservation {
+  id               String         @id @default(cuid())
+  sellerOfferId    String
+  catalogProductId String
+  sellerId         String
+  previousAmount   Decimal?       @db.Decimal(12, 2)
+  amount           Decimal        @db.Decimal(12, 2)
+  currency         String         @default("TRY") @db.VarChar(3)
+  priceVersion     Int
+  source           String         @db.VarChar(50)
+  actorUserId      String?
+  observedAt       DateTime       @default(now())
+  sellerOffer      SellerOffer    @relation(fields: [sellerId, sellerOfferId], references: [sellerId, id], onDelete: Restrict)
+  catalogProduct   CatalogProduct @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  seller           SellerProfile  @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  actor            User?          @relation("SellerOfferPriceObservationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([sellerOfferId, priceVersion], map: "SellerOfferPriceObservation_offer_version_key")
+  @@index([catalogProductId, observedAt], map: "SellerOfferPriceObservation_catalog_observed_idx")
+  @@index([sellerId, observedAt], map: "SellerOfferPriceObservation_seller_observed_idx")
 }
 
 model StockMovement {

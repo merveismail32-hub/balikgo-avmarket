@@ -3,13 +3,17 @@ import { z } from "zod";
 import { getApprovedSeller } from "@/app/lib/seller-auth";
 import { prisma } from "@/app/lib/prisma";
 import { setSellerAbsoluteStock, StockTruthError } from "@/app/lib/stock-truth";
+import { SellerOfferPriceError, setSellerOfferPrice } from "@/app/lib/seller-offer-price";
 
 const productIdSchema = z.string().min(1).max(128);
 const inventorySchema = z.object({
   price: z.number().finite().positive().max(9_999_999_999.99).optional(),
   stock: z.number().finite().int().min(0).max(2_147_483_647).optional(),
   expectedInventoryVersion: z.number().int().min(0).optional(),
-}).strict().refine((value) => value.price !== undefined || value.stock !== undefined);
+  expectedPriceVersion: z.number().int().min(1).optional(),
+}).strict().refine((value) => value.price !== undefined || value.stock !== undefined).superRefine((value, context) => {
+  if (value.price !== undefined && value.expectedPriceVersion === undefined) context.addIssue({ code: "custom", path: ["expectedPriceVersion"], message: "Fiyat sürümü gereklidir." });
+});
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const seller = await getApprovedSeller();
@@ -29,14 +33,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (parsed.data.expectedInventoryVersion === undefined || !product.sellerOffer) throw new StockTruthError("STALE_INVENTORY_VERSION");
       await setSellerAbsoluteStock(tx, { sellerOfferId: product.sellerOffer.id, productId: id, sellerId: seller.id, expectedVersion: parsed.data.expectedInventoryVersion, quantity: parsed.data.stock, idempotencyKey: `stock:v1:seller-set:${product.sellerOffer.id}:${parsed.data.expectedInventoryVersion}:${parsed.data.stock}`, source: "SELLER_INVENTORY", actorSellerId: seller.id });
     }
-    if (parsed.data.price !== undefined) await tx.product.update({ where: { id }, data: { price: parsed.data.price } });
-    if (parsed.data.price !== undefined) await tx.sellerOffer.updateMany({ where: { legacyProductId: id, sellerId: seller.id }, data: { price: parsed.data.price } });
+    if (parsed.data.price !== undefined) {
+      if (!product.sellerOffer || parsed.data.expectedPriceVersion === undefined) throw new SellerOfferPriceError("STALE_PRICE_VERSION");
+      await setSellerOfferPrice(tx, { sellerOfferId: product.sellerOffer.id, productId: id, sellerId: seller.id, expectedPriceVersion: parsed.data.expectedPriceVersion, price: parsed.data.price, source: "SELLER_INVENTORY", actorUserId: seller.userId });
+    }
     return true;
   });
   if (!updated) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
 
-  const product = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true, price: true, active: true, sellerOffer: { select: { stock: true, inventoryVersion: true } } } });
+  const product = await prisma.product.findFirst({ where: { id, sellerId: seller.id }, select: { id: true, price: true, active: true, sellerOffer: { select: { stock: true, inventoryVersion: true, priceVersion: true } } } });
   if (!product) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
-  return NextResponse.json({ ...product, stock: product.sellerOffer?.stock ?? 0, inventoryVersion: product.sellerOffer?.inventoryVersion, sellerOffer: undefined, price: Number(product.price) });
-  } catch (error) { if (error instanceof StockTruthError && error.code === "STALE_INVENTORY_VERSION") return NextResponse.json({ error: "Stok başka bir işlem tarafından değiştirildi; sayfayı yenileyin." }, { status: 409 }); throw error; }
+  return NextResponse.json({ ...product, stock: product.sellerOffer?.stock ?? 0, inventoryVersion: product.sellerOffer?.inventoryVersion, priceVersion: product.sellerOffer?.priceVersion, sellerOffer: undefined, price: Number(product.price) });
+  } catch (error) { if (error instanceof StockTruthError && error.code === "STALE_INVENTORY_VERSION") return NextResponse.json({ error: "Stok başka bir işlem tarafından değiştirildi; sayfayı yenileyin." }, { status: 409 }); if (error instanceof SellerOfferPriceError && error.code === "STALE_PRICE_VERSION") return NextResponse.json({ error: "Fiyat başka bir işlem tarafından değiştirildi; sayfayı yenileyin." }, { status: 409 }); throw error; }
 }

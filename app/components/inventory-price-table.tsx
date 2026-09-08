@@ -15,6 +15,7 @@ type InventoryProduct = {
   price: number;
   stock: number;
   inventoryVersion: number;
+  priceVersion: number;
   active: boolean;
 };
 
@@ -62,10 +63,10 @@ export function InventoryPriceTable({ initialProducts }: { initialProducts: Inve
     setSaving(product.id);
     setMessages((current) => { const next = { ...current }; delete next[product.id]; return next; });
     try {
-      const response = await fetch(`/api/seller/products/${product.id}/inventory`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price, stock, expectedInventoryVersion: product.inventoryVersion }) });
-      const result = await response.json().catch(() => ({})) as { error?: string; price?: number; stock?: number; inventoryVersion?: number };
+      const response = await fetch(`/api/seller/products/${product.id}/inventory`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price, stock, expectedInventoryVersion: product.inventoryVersion, expectedPriceVersion: product.priceVersion }) });
+      const result = await response.json().catch(() => ({})) as { error?: string; price?: number; stock?: number; inventoryVersion?: number; priceVersion?: number };
       if (!response.ok || typeof result.price !== "number" || typeof result.stock !== "number") throw new Error(result.error ?? "Stok ve fiyat güncellenemedi.");
-      setProducts((current) => current.map((item) => item.id === product.id ? { ...item, price: result.price!, stock: result.stock!, inventoryVersion: result.inventoryVersion ?? item.inventoryVersion } : item));
+      setProducts((current) => current.map((item) => item.id === product.id ? { ...item, price: result.price!, stock: result.stock!, inventoryVersion: result.inventoryVersion ?? item.inventoryVersion, priceVersion: result.priceVersion ?? item.priceVersion } : item));
       setDrafts((current) => ({ ...current, [product.id]: { price: String(result.price), stock: String(result.stock) } }));
       setMessages((current) => ({ ...current, [product.id]: { tone: "success", text: "Değişiklikler kaydedildi." } }));
     } catch (error) {

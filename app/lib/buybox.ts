@@ -2,9 +2,9 @@ export const BUYBOX_ALGORITHM_VERSION = "v1" as const;
 
 export const BUYBOX_WEIGHTS = { price: 0.55, inventory: 0.15, handling: 0.1, sellerPerformance: 0.2 } as const;
 
-export type BuyboxReasonCode = "CATALOG_INACTIVE" | "OFFER_INACTIVE" | "OUT_OF_STOCK" | "INVALID_PRICE" | "SELLER_INELIGIBLE" | "CATALOG_MISMATCH";
+export type BuyboxReasonCode = "CATALOG_INACTIVE" | "OFFER_INACTIVE" | "PRICE_ANOMALY_HELD" | "OUT_OF_STOCK" | "INVALID_PRICE" | "SELLER_INELIGIBLE" | "CATALOG_MISMATCH";
 export type SellerPerformance = { successfulOrders: number; totalOrders: number };
-export type BuyboxOfferInput = { id: string; catalogProductId: string; sellerId: string; price: number; stock: number; active: boolean; handlingTimeDays: number | null; sellerStatus: string; sellerPerformance?: SellerPerformance };
+export type BuyboxOfferInput = { id: string; catalogProductId: string; sellerId: string; price: number; stock: number; active: boolean; priceAnomalyHeld?: boolean; handlingTimeDays: number | null; sellerStatus: string; sellerPerformance?: SellerPerformance };
 export type BuyboxCatalogInput = { id: string; active: boolean; moderationStatus: string };
 export type BuyboxScoreBreakdown = { priceScore: number; inventoryScore: number; handlingScore: number; sellerPerformanceScore: number; sellerPerformanceConfidence: number; finalScore: number };
 export type RankedBuyboxOffer<T extends BuyboxOfferInput> = T & { score: BuyboxScoreBreakdown };
@@ -17,6 +17,7 @@ export function getOfferEligibility(catalog: BuyboxCatalogInput, offer: BuyboxOf
   if (!catalog.active || catalog.moderationStatus !== "APPROVED") reasons.push("CATALOG_INACTIVE");
   if (offer.catalogProductId !== catalog.id) reasons.push("CATALOG_MISMATCH");
   if (!offer.active) reasons.push("OFFER_INACTIVE");
+  if (!isSellerOfferPublicationEligible(offer)) reasons.push("PRICE_ANOMALY_HELD");
   if (offer.stock <= 0) reasons.push("OUT_OF_STOCK");
   if (!Number.isFinite(offer.price) || offer.price <= 0) reasons.push("INVALID_PRICE");
   if (offer.sellerStatus !== "APPROVED") reasons.push("SELLER_INELIGIBLE");
@@ -57,3 +58,4 @@ export function revalidateOffer(catalog: BuyboxCatalogInput, offer: BuyboxOfferI
   if (quantity > offer.stock && !reasons.includes("OUT_OF_STOCK")) reasons.push("OUT_OF_STOCK");
   return { eligible: reasons.length === 0, reasons };
 }
+import { isSellerOfferPublicationEligible } from "./offer-publication-eligibility.ts";

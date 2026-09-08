@@ -67,6 +67,12 @@ const gates: CommandGate[] = [
   command("stock-truth", "INVENTORY_SAFETY", nodeStrip("scripts/verify-stock-truth.ts"), 30_000),
   command("stock-reservation", "INVENTORY_SAFETY", nodeStrip("scripts/verify-stock-reservation.ts"), 30_000),
   command("buybox", "ORDER_SAFETY", nodeStrip("scripts/verify-buybox.ts"), 30_000),
+  command("seller-offer-price-history", "PRICING_SAFETY", nodeTs("scripts/verify-seller-offer-price-history.ts"), 30_000),
+  command("internal-price-benchmark", "PRICING_SAFETY", nodeTs("scripts/verify-internal-price-benchmark.ts"), 30_000),
+  command("pricing-anomaly", "PRICING_SAFETY", nodeTs("scripts/verify-pricing-anomaly.ts"), 30_000),
+  command("price-anomaly-publication", "PRICING_SAFETY", nodeTs("scripts/verify-price-anomaly-publication.ts"), 30_000),
+  command("admin-price-override", "PRICING_SAFETY", nodeTs("scripts/verify-admin-price-override.ts"), 30_000),
+  command("pricing-intelligence-read-model", "PRICING_SAFETY", nodeTs("scripts/verify-pricing-intelligence-read-model.ts"), 30_000),
   command("shipping-contract", "SHIPMENT_SAFETY", nodeTs("scripts/verify-shipping.ts"), 30_000),
   command("shipment-orchestration", "SHIPMENT_SAFETY", nodeTs("scripts/verify-shipment-orchestration-v1.ts"), 30_000),
   command("release-safety", "RELEASE_SAFETY", nodeTs("scripts/verify-release-safety.ts"), 30_000, "SECURITY_FAILURE"),
@@ -92,6 +98,12 @@ async function main() {
       command("finance-invariants", "TRANSACTION_SAFETY", nodeTs("scripts/verify-finance-invariants.ts", true), 180_000),
       command("order-state-machine", "ORDER_SAFETY", nodeTs("scripts/verify-order-state-machine.ts", true), 300_000),
       command("payment-expiry-db", "TRANSACTION_SAFETY", nodeTs("scripts/test-payment-expiry-db-e2e.ts", true), 300_000),
+      command("seller-offer-price-history-db", "PRICING_SAFETY", nodeTs("scripts/test-seller-offer-price-history-db-e2e.ts", true), 300_000),
+      command("internal-price-benchmark-db", "PRICING_SAFETY", nodeTs("scripts/test-internal-price-benchmark-db-e2e.ts", true), 300_000),
+      command("pricing-anomaly-db", "PRICING_SAFETY", nodeTs("scripts/test-pricing-anomaly-db-e2e.ts", true), 300_000),
+      command("price-anomaly-publication-db", "PRICING_SAFETY", nodeTs("scripts/test-price-anomaly-publication-db-e2e.ts", true), 300_000),
+      command("admin-price-override-db", "PRICING_SAFETY", nodeTs("scripts/test-admin-price-override-db-e2e.ts", true), 300_000),
+      command("pricing-intelligence-read-model-db", "PRICING_SAFETY", nodeTs("scripts/test-pricing-intelligence-read-model-db-e2e.ts", true), 300_000),
     ];
     for (const gate of fullGates) { if (!fullReady) gate.skip = "FULL_ENVIRONMENT_NOT_READY"; const result = await runCommandGate(gate, { cwd: root, secrets }); results.push(result); console.log(`${result.status.padEnd(7)} ${result.group}/${result.name} (${result.durationMs}ms)`); }
     const runtimeResults = await runtimeGates(password, fullReady); for (const runtime of runtimeResults) { results.push(runtime); console.log(`${runtime.status.padEnd(7)} ${runtime.group}/${runtime.name} (${runtime.durationMs}ms)`); }

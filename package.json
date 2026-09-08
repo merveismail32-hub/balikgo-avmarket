@@ -81,6 +81,18 @@
     "test:commercial-installment-checkout-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-commercial-installment-checkout-db-e2e.ts",
     "test:installment-read-model": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-installment-read-model.ts",
     "test:installment-read-model-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-installment-read-model-db-e2e.ts",
+    "test:seller-offer-price-history": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-seller-offer-price-history.ts",
+    "test:seller-offer-price-history-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-seller-offer-price-history-db-e2e.ts",
+    "test:internal-price-benchmark": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-internal-price-benchmark.ts",
+    "test:internal-price-benchmark-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-internal-price-benchmark-db-e2e.ts",
+    "test:pricing-anomaly": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-pricing-anomaly.ts",
+    "test:pricing-anomaly-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-pricing-anomaly-db-e2e.ts",
+    "test:price-anomaly-publication": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-price-anomaly-publication.ts",
+    "test:price-anomaly-publication-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-price-anomaly-publication-db-e2e.ts",
+    "test:admin-price-override": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-admin-price-override.ts",
+    "test:admin-price-override-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-admin-price-override-db-e2e.ts",
+    "test:pricing-intelligence-read-model": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-pricing-intelligence-read-model.ts",
+    "test:pricing-intelligence-read-model-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-pricing-intelligence-read-model-db-e2e.ts",
     "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
   },
   "dependencies": {

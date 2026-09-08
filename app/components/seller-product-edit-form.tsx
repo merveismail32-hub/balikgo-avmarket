@@ -22,6 +22,7 @@ type EditableProduct = {
   oldPrice: number | null;
   stock: number;
   inventoryVersion?: number;
+  priceVersion?: number;
   description: string;
   technicalDetails: string;
   shippingInfo: string;
@@ -90,6 +91,7 @@ export function SellerProductEditForm({ product, categories, brands }: { product
       const payload = {
         ...Object.fromEntries(formData),
         expectedInventoryVersion: product.inventoryVersion ?? 0,
+        expectedPriceVersion: product.priceVersion ?? 1,
         active: formData.get("active") === "on",
         imageUrl: finalImages[Math.min(coverIndex, finalImages.length - 1)],
         images: finalImages,

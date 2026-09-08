@@ -1,0 +1,4 @@
+import { NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { getSellerPricingIntelligence, PricingIntelligenceReadError } from "@/app/lib/pricing-intelligence-read-model";
+export async function GET(_:Request,{params}:{params:Promise<{sellerOfferId:string}>}){const session=await auth();if(!session?.user?.id)return NextResponse.json({error:"Oturum gerekli."},{status:401});if(session.user.role!=="SELLER")return NextResponse.json({error:"Satıcı yetkisi gerekli."},{status:403});try{const{sellerOfferId}=await params;return NextResponse.json(await getSellerPricingIntelligence({actorUserId:session.user.id,sellerOfferId}));}catch(error){if(error instanceof PricingIntelligenceReadError)return NextResponse.json({error:error.code==="FORBIDDEN"?"Satıcı yetkisi gerekli.":"Fiyat bilgisi bulunamadı."},{status:error.code==="FORBIDDEN"?403:404});throw error;}}
