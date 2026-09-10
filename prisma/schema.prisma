@@ -264,6 +264,9 @@ enum StockReleaseReason {
 }
 
 model User {
+  campaigns                            Campaign[]
+  campaignAudits                       CampaignAudit[]
+  campaignParticipationAudits          CampaignParticipationAudit[]
   id                                   String                             @id @default(cuid())
   name                                 String
   surname                              String
@@ -352,6 +355,8 @@ model SellerProfile {
   installmentRequests           SellerInstallmentRequest[]
   installmentRequestAudits      SellerInstallmentRequestAudit[]
   installmentPolicies           InstallmentCommercialPolicy[]
+  campaignParticipations        CampaignParticipation[]
+  campaignParticipationAudits   CampaignParticipationAudit[]
   createdAt                     DateTime                            @default(now())
   updatedAt                     DateTime                            @updatedAt
 
@@ -701,38 +706,42 @@ model CatalogProduct {
 }
 
 model SellerOffer {
-  id                      String                        @id @default(cuid())
-  sellerId                String
-  catalogProductId        String
-  legacyProductId         String?                       @unique
-  sellerSku               String?                       @db.VarChar(80)
-  price                   Decimal                       @db.Decimal(12, 2)
-  priceVersion            Int                           @default(1)
-  priceAnomalyHeld        Boolean                       @default(false)
-  listPrice               Decimal?                      @db.Decimal(12, 2)
-  stock                   Int                           @default(0)
-  inventoryVersion        Int                           @default(0)
-  active                  Boolean                       @default(true)
-  handlingTimeDays        Int                           @default(0)
-  source                  String?                       @db.VarChar(50)
-  externalSourceId        String?                       @db.VarChar(191)
-  matchStatus             CatalogMatchStatus?
-  matchReason             String?                       @db.VarChar(100)
-  matchConfidence         Decimal?                      @db.Decimal(5, 4)
-  seller                  SellerProfile                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct          CatalogProduct                @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
-  legacyProduct           Product?                      @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
-  cartItems               CartItem[]
-  orderItems              OrderItem[]
-  matchReviews            CatalogMatchReview[]
-  stockMovements          StockMovement[]
-  installmentRequests     SellerInstallmentRequest[]
-  installmentPolicies     InstallmentCommercialPolicy[]
-  priceObservations       SellerOfferPriceObservation[]
-  priceAnomalyHolds       SellerOfferPriceAnomalyHold[]
-  adminPriceInterventions AdminPriceIntervention[]
-  createdAt               DateTime                      @default(now())
-  updatedAt               DateTime                      @updatedAt
+  id                          String                        @id @default(cuid())
+  sellerId                    String
+  catalogProductId            String
+  legacyProductId             String?                       @unique
+  sellerSku                   String?                       @db.VarChar(80)
+  price                       Decimal                       @db.Decimal(12, 2)
+  priceVersion                Int                           @default(1)
+  priceAnomalyHeld            Boolean                       @default(false)
+  listPrice                   Decimal?                      @db.Decimal(12, 2)
+  stock                       Int                           @default(0)
+  inventoryVersion            Int                           @default(0)
+  active                      Boolean                       @default(true)
+  handlingTimeDays            Int                           @default(0)
+  source                      String?                       @db.VarChar(50)
+  externalSourceId            String?                       @db.VarChar(191)
+  matchStatus                 CatalogMatchStatus?
+  matchReason                 String?                       @db.VarChar(100)
+  matchConfidence             Decimal?                      @db.Decimal(5, 4)
+  seller                      SellerProfile                 @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct              CatalogProduct                @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  legacyProduct               Product?                      @relation("LegacyProductOffer", fields: [legacyProductId], references: [id], onDelete: SetNull)
+  cartItems                   CartItem[]
+  orderItems                  OrderItem[]
+  matchReviews                CatalogMatchReview[]
+  stockMovements              StockMovement[]
+  installmentRequests         SellerInstallmentRequest[]
+  installmentPolicies         InstallmentCommercialPolicy[]
+  priceObservations           SellerOfferPriceObservation[]
+  priceAnomalyHolds           SellerOfferPriceAnomalyHold[]
+  adminPriceInterventions     AdminPriceIntervention[]
+  campaignTargets             CampaignSellerOfferTarget[]
+  campaignAudits              CampaignAudit[]               @relation("CampaignAuditSellerOffer")
+  campaignParticipations      CampaignParticipation[]
+  campaignParticipationAudits CampaignParticipationAudit[]
+  createdAt                   DateTime                      @default(now())
+  updatedAt                   DateTime                      @updatedAt
 
   @@unique([sellerId, catalogProductId])
   @@unique([sellerId, id], map: "SellerOffer_seller_id_key")
@@ -922,45 +931,60 @@ model Order {
 }
 
 model OrderItem {
-  id                            String                 @id @default(cuid())
+  id                            String                   @id @default(cuid())
   orderId                       String
   productId                     String
   sellerId                      String
   catalogProductId              String?
   sellerOfferId                 String?
   productName                   String
-  productSku                    String?                @db.VarChar(80)
+  productSku                    String?                  @db.VarChar(80)
   productImageUrl               String
-  unitPrice                     Decimal                @db.Decimal(12, 2)
+  unitPrice                     Decimal                  @db.Decimal(12, 2)
   quantity                      Int
-  status                        OrderStatus            @default(NEW)
+  status                        OrderStatus              @default(NEW)
   shippingCompany               String?
   trackingNumber                String?
-  commissionRate                Decimal?               @db.Decimal(5, 4)
-  commissionAmount              Decimal?               @db.Decimal(12, 2)
-  sellerNetAmount               Decimal?               @db.Decimal(12, 2)
-  commissionPolicySource        String?                @db.VarChar(40)
-  commissionPolicyReference     String?                @db.VarChar(100)
+  commissionRate                Decimal?                 @db.Decimal(5, 4)
+  commissionAmount              Decimal?                 @db.Decimal(12, 2)
+  sellerNetAmount               Decimal?                 @db.Decimal(12, 2)
+  commissionPolicySource        String?                  @db.VarChar(40)
+  commissionPolicyReference     String?                  @db.VarChar(100)
   commissionAgreementId         String?
   commissionAgreementVersion    Int?
-  discountAmount                Decimal                @default(0) @db.Decimal(12, 2)
+  discountAmount                Decimal                  @default(0) @db.Decimal(12, 2)
+  baseUnitPrice                 Decimal?                 @db.Decimal(12, 2)
+  campaignApplied               Boolean?
+  campaignId                    String?
+  campaignVersion               Int?
+  campaignType                  CampaignType?
+  campaignDiscountAmount        Decimal?                 @db.Decimal(12, 2)
+  couponApplied                 Boolean?
+  couponSnapshotId              String?
+  couponReference               String?                  @db.VarChar(50)
+  couponDiscountAmount          Decimal?                 @db.Decimal(12, 2)
+  compositionMode               CheckoutCompositionMode?
+  discountSource                CheckoutDiscountSource?
+  effectiveUnitPrice            Decimal?                 @db.Decimal(12, 2)
+  finalLineAmount               Decimal?                 @db.Decimal(12, 2)
+  pricingEffectiveAt            DateTime?                @db.Timestamptz(3)
   stockReservationState         StockReservationState?
   stockReservationReleasedAt    DateTime?
   stockReservationReleaseReason StockReleaseReason?
-  stockReservationVersion       Int                    @default(0)
-  order                         Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockReservationVersion       Int                      @default(0)
+  order                         Order                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   statusHistory                 OrderStatusHistory[]
   payout                        SellerPayout?
   refunds                       Refund[]
   ledgerEntries                 FinancialLedgerEntry[]
   review                        Review?
   shipmentItems                 ShipmentItem[]
-  product                       Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
-  seller                        SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  catalogProduct                CatalogProduct?        @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
-  sellerOffer                   SellerOffer?           @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
-  createdAt                     DateTime               @default(now())
-  updatedAt                     DateTime               @updatedAt
+  product                       Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  seller                        SellerProfile            @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  catalogProduct                CatalogProduct?          @relation(fields: [catalogProductId], references: [id], onDelete: SetNull)
+  sellerOffer                   SellerOffer?             @relation(fields: [sellerOfferId], references: [id], onDelete: SetNull)
+  createdAt                     DateTime                 @default(now())
+  updatedAt                     DateTime                 @updatedAt
 
   @@index([sellerId, createdAt])
   @@index([orderId])
@@ -1448,4 +1472,159 @@ model AdminAuditLog {
 
   @@index([entityType, entityId, createdAt])
   @@index([actorUserId, createdAt])
+}
+
+enum CampaignStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum CampaignType {
+  PERCENTAGE_DISCOUNT
+  FIXED_AMOUNT_DISCOUNT
+  FIXED_PROMOTIONAL_PRICE
+}
+
+enum CampaignAuditAction {
+  CAMPAIGN_CREATED
+  CAMPAIGN_UPDATED
+  CAMPAIGN_PUBLISHED
+  CAMPAIGN_CANCELLED
+  CAMPAIGN_TARGET_ADDED
+  CAMPAIGN_TARGET_REMOVED
+}
+
+enum CampaignParticipationStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+  REVOKED
+}
+
+enum CampaignParticipationAuditAction {
+  PARTICIPATION_REQUESTED
+  PARTICIPATION_CANCELLED
+  PARTICIPATION_APPROVED
+  PARTICIPATION_REJECTED
+  PARTICIPATION_REVOKED
+}
+
+enum CheckoutCompositionMode {
+  NONE
+  CAMPAIGN_ONLY
+  COUPON_ONLY
+}
+
+enum CheckoutDiscountSource {
+  NONE
+  CAMPAIGN
+  COUPON
+}
+
+model Campaign {
+  id                  String                       @id @default(cuid())
+  internalName        String                       @db.VarChar(200)
+  status              CampaignStatus               @default(DRAFT)
+  campaignType        CampaignType
+  percentage          Decimal?                     @db.Decimal(5, 2)
+  fixedAmount         Decimal?                     @db.Decimal(12, 2)
+  fixedPrice          Decimal?                     @db.Decimal(12, 2)
+  effectiveFrom       DateTime                     @db.Timestamptz(3)
+  effectiveUntil      DateTime                     @db.Timestamptz(3)
+  version             Int                          @default(1)
+  createdByUserId     String
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+  createdBy           User                         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "Campaign_creator_fkey")
+  audits              CampaignAudit[]
+  sellerOfferTargets  CampaignSellerOfferTarget[]
+  participations      CampaignParticipation[]
+  participationAudits CampaignParticipationAudit[]
+
+  @@index([status, effectiveFrom, effectiveUntil])
+}
+
+model CampaignParticipation {
+  id             String                       @id @default(cuid())
+  campaignId     String
+  sellerId       String
+  sellerOfferId  String
+  status         CampaignParticipationStatus  @default(REQUESTED)
+  activeKey      String?                      @unique @db.VarChar(191)
+  version        Int                          @default(1)
+  decisionReason String?                      @db.VarChar(500)
+  decidedAt      DateTime?
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
+  campaign       Campaign                     @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  seller         SellerProfile                @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  sellerOffer    SellerOffer                  @relation(fields: [sellerId, sellerOfferId], references: [sellerId, id], onDelete: Restrict)
+  audits         CampaignParticipationAudit[]
+
+  @@index([campaignId, status, createdAt])
+  @@index([sellerId, status, createdAt])
+  @@index([sellerOfferId, status, createdAt])
+}
+
+model CampaignParticipationAudit {
+  id              String                           @id @default(cuid())
+  participationId String
+  campaignId      String
+  sellerId        String
+  sellerOfferId   String
+  actorUserId     String
+  actorRole       UserRole
+  action          CampaignParticipationAuditAction
+  previousStatus  CampaignParticipationStatus?
+  newStatus       CampaignParticipationStatus
+  expectedVersion Int?
+  previousVersion Int?
+  newVersion      Int
+  reason          String?                          @db.VarChar(500)
+  createdAt       DateTime                         @default(now())
+  participation   CampaignParticipation            @relation(fields: [participationId], references: [id], onDelete: Restrict)
+  campaign        Campaign                         @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  seller          SellerProfile                    @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  sellerOffer     SellerOffer                      @relation(fields: [sellerOfferId], references: [id], onDelete: Restrict)
+  actor           User                             @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([participationId, newVersion])
+  @@index([campaignId, createdAt])
+  @@index([sellerId, createdAt])
+}
+
+model CampaignAudit {
+  id              String              @id @default(cuid())
+  campaignId      String
+  actorUserId     String
+  sellerOfferId   String?
+  actorRole       UserRole
+  action          CampaignAuditAction
+  previousVersion Int?
+  newVersion      Int
+  previousState   Json?
+  newState        Json
+  reason          String              @db.VarChar(500)
+  createdAt       DateTime            @default(now())
+  campaign        Campaign            @relation(fields: [campaignId], references: [id], onDelete: Restrict, map: "CampaignAudit_campaign_fkey")
+  actor           User                @relation(fields: [actorUserId], references: [id], onDelete: Restrict, map: "CampaignAudit_actor_fkey")
+  sellerOffer     SellerOffer?        @relation("CampaignAuditSellerOffer", fields: [sellerOfferId], references: [id], onDelete: Restrict)
+
+  @@unique([campaignId, newVersion])
+  @@index([campaignId, createdAt])
+  @@index([sellerOfferId, createdAt])
+}
+
+model CampaignSellerOfferTarget {
+  id            String      @id @default(cuid())
+  campaignId    String
+  sellerOfferId String
+  createdAt     DateTime    @default(now())
+  campaign      Campaign    @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  sellerOffer   SellerOffer @relation(fields: [sellerOfferId], references: [id], onDelete: Restrict)
+
+  @@unique([campaignId, sellerOfferId])
+  @@index([sellerOfferId, campaignId])
 }

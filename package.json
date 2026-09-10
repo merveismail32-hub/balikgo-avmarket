@@ -93,7 +93,14 @@
     "test:admin-price-override-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-admin-price-override-db-e2e.ts",
     "test:pricing-intelligence-read-model": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-pricing-intelligence-read-model.ts",
     "test:pricing-intelligence-read-model-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-pricing-intelligence-read-model-db-e2e.ts",
-    "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts"
+    "test:payment-expiry-db": "node --env-file=.env --conditions=react-server --import tsx scripts/test-payment-expiry-db-e2e.ts",
+    "test:campaign": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-campaign.ts",
+    "test:campaign-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-campaign-db-e2e.ts",
+    "test:campaign-resolution": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-campaign-resolution.ts",
+    "test:campaign-resolution-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-campaign-resolution-db-e2e.ts",
+    "test:campaign-checkout": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-campaign-checkout-composition.ts",
+    "test:campaign-checkout-db": "node --env-file=.env --experimental-strip-types scripts/run-campaign-checkout-db-e2e.ts",
+    "test:campaign-participation-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-campaign-participation-db-e2e.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

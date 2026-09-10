@@ -1,0 +1,3 @@
+import { auth } from "@/auth";
+import { CampaignParticipationError, listAdminCampaignParticipations } from "@/app/lib/campaign-participation";
+export async function GET(request: Request) { const session = await auth(); if (!session?.user?.id) return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 }); if (session.user.role !== "ADMIN") return Response.json({ error: "FORBIDDEN" }, { status: 403 }); try { return Response.json(await listAdminCampaignParticipations(session.user.id, new URL(request.url).searchParams.get("status"))); } catch (error) { if (error instanceof CampaignParticipationError) return Response.json({ error: error.code }, { status: error.code === "FORBIDDEN" ? 403 : 400 }); throw error; } }
