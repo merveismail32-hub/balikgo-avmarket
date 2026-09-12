@@ -55,6 +55,9 @@ export function runLocalPrisma(input: { root: string; action: string; env: NodeJ
   if (stdout) process.stdout.write(stdout); if (stderr) process.stderr.write(stderr);
   if (result.error) throw new Error(`PRISMA_CHILD_SPAWN_FAILED:${result.error.name}`);
   if (result.signal) throw new Error(`PRISMA_CHILD_SIGNAL:${result.signal}`);
-  if (result.status !== 0) throw new Error(`PRISMA_CHILD_EXIT_${result.status ?? "UNKNOWN"}`);
+  if (result.status !== 0) {
+    const detail = sanitizeChildText(`${stderr}\n${stdout}`.trim(), secrets).slice(-2000);
+    throw new Error(`PRISMA_CHILD_EXIT_${result.status ?? "UNKNOWN"}${detail ? `:${detail}` : ""}`);
+  }
   return { version: cli.version };
 }

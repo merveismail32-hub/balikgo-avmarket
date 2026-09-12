@@ -4,6 +4,7 @@ import { Prisma, type StockReleaseReason } from "@prisma/client";
 import { releaseReservationStock } from "./stock-truth";
 import { cancellationLedgerReversals } from "./order-invariants";
 import { reconcileOrderAggregate } from "./order-reconciliation";
+import { consumeCouponReservation, releaseCouponReservation } from "./coupon-access";
 
 export class StockReservationError extends Error {
   constructor(public readonly code: "RESERVATION_CONFLICT" | "RESERVATION_NOT_FOUND" | "PAYMENT_NOT_PAID") { super(code); }
@@ -12,7 +13,7 @@ export class StockReservationError extends Error {
 export const reservationReleaseKey = (orderItemId: string) => `stock:v2:reservation-release:${orderItemId}`;
 
 export async function consumeOrderReservationsForPayment(tx: Prisma.TransactionClient, paymentId: string) {
-  const payment = await tx.payment.findUnique({ where: { id: paymentId }, select: { orderId: true, order: { select: { items: { select: { id: true, stockReservationState: true, stockReservationVersion: true } } } } } });
+  const payment = await tx.payment.findUnique({ where: { id: paymentId }, select: { orderId: true, order: { select: { userId: true, couponRedemption: { select: { id: true, campaignId: true } }, items: { select: { id: true, stockReservationState: true, stockReservationVersion: true } } } } } });
   if (!payment) throw new StockReservationError("RESERVATION_NOT_FOUND");
   for (const item of payment.order.items) {
     if (item.stockReservationState === null) continue;
@@ -21,6 +22,8 @@ export async function consumeOrderReservationsForPayment(tx: Prisma.TransactionC
     const changed = await tx.orderItem.updateMany({ where: { id: item.id, stockReservationState: "RESERVED", stockReservationVersion: item.stockReservationVersion }, data: { stockReservationState: "CONSUMED", stockReservationVersion: { increment: 1 } } });
     if (!changed.count) throw new StockReservationError("RESERVATION_CONFLICT");
   }
+  // campaignId is the immutable access-redemption marker; legacy economics stay unchanged.
+  if (payment.order.couponRedemption?.campaignId) await consumeCouponReservation(tx, { redemptionId: payment.order.couponRedemption.id, userId: payment.order.userId, orderId: payment.orderId });
 }
 
 export async function releaseOrderItemReservation(tx: Prisma.TransactionClient, input: { orderItemId: string; reason: StockReleaseReason; allowConsumed: boolean; actorUserId?: string; actorSellerId?: string }) {
@@ -47,7 +50,7 @@ export async function releaseOrderItemReservation(tx: Prisma.TransactionClient, 
 }
 
 export async function releaseOrderReservation(tx: Prisma.TransactionClient, input: { paymentId: string; reason: "PAYMENT_FAILED" | "PAYMENT_EXPIRED" }) {
-  const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { orderId: true, order: { select: { userId: true, couponRedemption: { select: { id: true, couponId: true } }, items: { select: { id: true, sellerId: true, status: true, unitPrice: true, quantity: true, discountAmount: true, commissionAmount: true, stockReservationState: true, payout: { select: { id: true } } } } } } } });
+  const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { orderId: true, order: { select: { userId: true, couponRedemption: { select: { id: true, couponId: true, campaignId: true } }, items: { select: { id: true, sellerId: true, status: true, unitPrice: true, quantity: true, discountAmount: true, commissionAmount: true, stockReservationState: true, payout: { select: { id: true } } } } } } } });
   if (!payment) throw new StockReservationError("RESERVATION_NOT_FOUND");
   for (const item of payment.order.items) {
     const released = await releaseOrderItemReservation(tx, { orderItemId: item.id, reason: input.reason, allowConsumed: false });
@@ -57,7 +60,9 @@ export async function releaseOrderReservation(tx: Prisma.TransactionClient, inpu
     const gross = item.unitPrice.mul(item.quantity).minus(item.discountAmount).toDecimalPlaces(2);
     await tx.financialLedgerEntry.createMany({ data: cancellationLedgerReversals({ sellerId: item.sellerId, orderItemId: item.id, payoutId: item.payout?.id, grossAmount: gross, commissionAmount: item.commissionAmount ?? new Prisma.Decimal(0), dedupePrefix: "reservation-release" }), skipDuplicates: true });
   }
-  if (payment.order.couponRedemption) {
+  if (payment.order.couponRedemption?.campaignId) {
+    await releaseCouponReservation(tx, { redemptionId: payment.order.couponRedemption.id, userId: payment.order.userId, orderId: payment.orderId, reason: input.reason });
+  } else if (payment.order.couponRedemption) {
     const removed = await tx.couponRedemption.deleteMany({ where: { id: payment.order.couponRedemption.id, orderId: payment.orderId } });
     if (removed.count) await tx.coupon.updateMany({ where: { id: payment.order.couponRedemption.couponId, usageCount: { gt: 0 } }, data: { usageCount: { decrement: 1 } } });
   }

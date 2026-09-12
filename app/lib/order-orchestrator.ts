@@ -6,6 +6,7 @@ import { cancellationLedgerReversals, isPaymentEligibleForFulfillment, pendingRe
 import { releaseOrderItemReservation } from "./stock-reservation";
 import { evaluateCancellationEligibility, isPreHandoffShipmentStatus } from "./cancellation-eligibility";
 import { reconcileOrderAggregate } from "./order-reconciliation";
+import { releaseCouponReservation } from "./coupon-access";
 
 type CancellationActor = { kind: "CUSTOMER"; userId: string } | { kind: "SELLER"; userId: string; sellerId: string };
 
@@ -55,6 +56,10 @@ export async function ensurePaidCancellationIntegrity(tx: Prisma.TransactionClie
 
 export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { orderItemId: string; actor: CancellationActor; reason?: string }) {
   const ownership = input.actor.kind === "CUSTOMER" ? { order: { userId: input.actor.userId } } : { sellerId: input.actor.sellerId };
+  const owned = await tx.orderItem.findFirst({ where: { id: input.orderItemId, ...ownership }, select: { orderId: true } });
+  if (!owned) return null;
+  // Same lock order as callbacks/expiry: Payment before stock, redemption and Order.
+  await tx.$queryRaw`SELECT id FROM "Payment" WHERE "orderId" = ${owned.orderId} FOR UPDATE`;
   let item = await tx.orderItem.findFirst({
     where: { id: input.orderItemId, ...ownership },
     select: { id: true, orderId: true, sellerId: true, productId: true, sellerOfferId: true, productName: true, quantity: true, unitPrice: true, discountAmount: true, commissionAmount: true, status: true, stockReservationState: true, payout: { select: { id: true } }, shipmentItems: { select: { shipmentId: true, shipment: { select: { status: true } } } }, order: { select: { userId: true, orderNumber: true, payment: { select: { id: true, amount: true, status: true } } } } },
@@ -115,6 +120,10 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
     : { userId: item.order.userId, orderId: item.orderId, type: "ORDER_CANCELLED", dedupeKey: `cancel:${item.id}:customer`, title: "Sipariş kalemi iptal edildi", message: `${item.order.orderNumber} siparişindeki ${item.productName} satıcı tarafından iptal edildi.` };
   await enqueueNotifications(tx, [notification]);
   await reconcileOrderAggregate(tx, item.orderId);
+  if (payment && ["PENDING", "AUTHORIZED"].includes(payment.status) && await tx.orderItem.count({ where: { orderId: item.orderId, status: { not: "CANCELLED" } } }) === 0) {
+    const redemption = await tx.couponRedemption.findUnique({ where: { orderId: item.orderId } });
+    if (redemption?.campaignId) await releaseCouponReservation(tx, { redemptionId: redemption.id, userId: item.order.userId, orderId: item.orderId, reason: "PRE_PAYMENT_ORDER_CANCELLED" });
+  }
   return { status: "CANCELLED" as const, idempotent: false, refundId };
 }
 

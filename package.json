@@ -100,7 +100,11 @@
     "test:campaign-resolution-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-campaign-resolution-db-e2e.ts",
     "test:campaign-checkout": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-campaign-checkout-composition.ts",
     "test:campaign-checkout-db": "node --env-file=.env --experimental-strip-types scripts/run-campaign-checkout-db-e2e.ts",
-    "test:campaign-participation-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-campaign-participation-db-e2e.ts"
+    "test:campaign-participation-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-campaign-participation-db-e2e.ts",
+    "test:coupon-voucher-foundation": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-coupon-voucher-foundation.ts",
+    "test:coupon-voucher-foundation-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-coupon-voucher-foundation-db-e2e.ts",
+    "test:coupon-redemption": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-coupon-redemption.ts",
+    "test:coupon-payment-lifecycle-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-coupon-payment-lifecycle-db-e2e.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

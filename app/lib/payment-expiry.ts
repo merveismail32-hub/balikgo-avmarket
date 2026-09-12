@@ -37,6 +37,7 @@ export async function claimExpiredPayments(client: TransactionHost, input: { now
 }
 
 export async function expireClaimedPayment(tx: Prisma.TransactionClient, claim: Claim, now = new Date()) {
+  await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${claim.id} FOR UPDATE`;
   const payment = await tx.payment.findFirst({ where: { id: claim.id, expiryClaimToken: claim.expiryClaimToken }, select: { id: true, orderId: true, status: true, reservationExpiresAt: true, expiryClaimExpiresAt: true, order: { select: { userId: true, orderNumber: true, items: { select: { id: true, status: true, stockReservationState: true, shipmentItems: { select: { id: true }, take: 1 } } } } } } });
   if (!payment || !["PENDING", "AUTHORIZED"].includes(payment.status) || !payment.reservationExpiresAt || payment.reservationExpiresAt > now || !payment.expiryClaimExpiresAt || payment.expiryClaimExpiresAt <= now) return { outcome: "skipped" as const };
   const fulfillmentConflict = payment.order.items.some((item) => !["NEW", "CANCELLED"].includes(item.status) || item.shipmentItems.length > 0);

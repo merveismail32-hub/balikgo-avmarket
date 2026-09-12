@@ -6,6 +6,7 @@ import { createGuardedTestPrisma } from "./guarded-test-prisma";
 import { createSellerOfferWithPriceEvidence, setSellerOfferPrice } from "../app/lib/seller-offer-price";
 import { createCampaign, publishCampaign, updateCampaign, cancelCampaign } from "../app/lib/campaign";
 import { addCampaignSellerOfferTarget, removeCampaignSellerOfferTarget } from "../app/lib/campaign-target";
+import { createCampaignAccessCoupon } from "../app/lib/coupon-access";
 
 const env = hydrateVerifiedTestEnvironment(process.env, process.cwd());
 const db = createGuardedTestPrisma({ DATABASE_URL: env.DATABASE_URL, SUPABASE_CA_CERT_PATH: env.SUPABASE_CA_CERT_PATH });
@@ -22,15 +23,16 @@ async function checkout(cookie: string, lines: Array<{ productId: string; seller
 async function cleanup() {
   const orders = ids.users.length ? await db.order.findMany({ where: { userId: { in: ids.users } }, select: { id: true } }) : [];
   const orderIds = orders.map(x => x.id);
-  if (orderIds.length) { await db.couponRedemption.deleteMany({ where: { orderId: { in: orderIds } } }); await db.paymentReconciliationReview.deleteMany({ where: { payment: { orderId: { in: orderIds } } } }); await db.order.deleteMany({ where: { id: { in: orderIds } } }); }
-  if (ids.campaigns.length) { await db.campaignAudit.deleteMany({ where: { campaignId: { in: ids.campaigns } } }); await db.campaignSellerOfferTarget.deleteMany({ where: { campaignId: { in: ids.campaigns } } }); await db.campaign.deleteMany({ where: { id: { in: ids.campaigns } } }); }
+  if (orderIds.length) { await db.couponRedemptionAudit.deleteMany({ where: { orderId: { in: orderIds } } }); await db.couponRedemption.deleteMany({ where: { orderId: { in: orderIds } } }); await db.paymentReconciliationReview.deleteMany({ where: { payment: { orderId: { in: orderIds } } } }); await db.order.deleteMany({ where: { id: { in: orderIds } } }); }
+  if (ids.campaigns.length) { await db.campaignAudit.deleteMany({ where: { campaignId: { in: ids.campaigns } } }); await db.campaignSellerOfferTarget.deleteMany({ where: { campaignId: { in: ids.campaigns } } }); }
   if (ids.offers.length) { await db.stockMovement.deleteMany({ where: { sellerOfferId: { in: ids.offers } } }); await db.sellerOfferPriceObservation.deleteMany({ where: { sellerOfferId: { in: ids.offers } } }); await db.sellerOffer.deleteMany({ where: { id: { in: ids.offers } } }); }
   if (ids.products.length) await db.product.deleteMany({ where: { id: { in: ids.products } } });
   if (ids.catalogs.length) await db.catalogProduct.deleteMany({ where: { id: { in: ids.catalogs } } });
   if (ids.coupons.length) await db.coupon.deleteMany({ where: { id: { in: ids.coupons } } });
+  if (ids.campaigns.length) await db.campaign.deleteMany({ where: { id: { in: ids.campaigns } } });
   if (ids.agreements.length) await db.sellerCategoryCommissionAgreement.deleteMany({ where: { id: { in: ids.agreements } } });
   if (ids.categories.length) await db.category.deleteMany({ where: { id: { in: ids.categories } } });
-  if (ids.users.length) await db.user.deleteMany({ where: { id: { in: ids.users } } });
+  if (ids.users.length) { await db.adminAuditLog.deleteMany({ where: { actorUserId: { in: ids.users } } }); await db.user.deleteMany({ where: { id: { in: ids.users } } }); }
 }
 
 async function main() {
@@ -48,6 +50,9 @@ async function main() {
   const observationsBefore = await db.sellerOfferPriceObservation.count(), interventionsBefore = await db.adminPriceIntervention.count();
   const noCampaign = await persisted(await checkout(cookie, [line(c)])); assert.equal(noCampaign.totalAmount.toFixed(2), "300.00"); assert.equal(noCampaign.items[0].compositionMode, "NONE");
   const percentId = await campaign("percent", "PERCENTAGE_DISCOUNT", "10", a); const percent = await persisted(await checkout(cookie, [line(a)])); assert.equal(percent.totalAmount.toFixed(2), "900.00"); assert.equal(percent.items[0].campaignId, percentId); assert.equal(percent.items[0].campaignVersion, 3); assert.equal(percent.items[0].campaignDiscountAmount?.toFixed(2), "100.00");
+  const accessCoupon = await createCampaignAccessCoupon(admin.id, { code: `${couponPrefix}ACCESS`, name: "QA Access", campaignId: percentId, globalRedemptionLimit: 2, perUserRedemptionLimit: 1, reason }); ids.coupons.push(accessCoupon.id);
+  const accessRequest = await checkout(cookie, [line(a)], accessCoupon.code); const accessOrder = await persisted(accessRequest); assert.equal(accessOrder.totalAmount.toFixed(2), "900.00"); assert.equal(accessOrder.items[0].campaignId, percentId); assert.equal(accessOrder.items[0].couponApplied, true); assert.equal(accessOrder.items[0].couponSnapshotId, accessCoupon.id); assert.equal(accessOrder.items[0].couponReference, accessCoupon.code); assert.equal(accessOrder.items[0].couponDiscountAmount?.toFixed(2), "0.00"); assert.equal(accessOrder.couponRedemption?.state, "RESERVED");
+  const accessReplay = await checkout(cookie, [line(a)], accessCoupon.code, accessRequest.clientRequestId); assert.equal(accessReplay.response.status, 200); assert.equal(accessReplay.body.id, accessOrder.id); assert.equal(await db.couponRedemption.count({ where: { couponId: accessCoupon.id } }), 1);
   await campaign("fixed", "FIXED_AMOUNT_DISCOUNT", "150", a); const fixed = await persisted(await checkout(cookie, [line(a)])); assert.equal(fixed.totalAmount.toFixed(2), "850.00");
   const promoId = await campaign("promo", "FIXED_PROMOTIONAL_PRICE", "800", a); const promo = await persisted(await checkout(cookie, [line(a)])); assert.equal(promo.totalAmount.toFixed(2), "800.00"); assert.equal(promo.items[0].campaignId, promoId);
   await campaign("future", "FIXED_PROMOTIONAL_PRICE", "100", a, { effectiveFrom: new Date(now + 3_600_000).toISOString(), effectiveUntil: new Date(now + 7_200_000).toISOString() }); const futureIgnored = await persisted(await checkout(cookie, [line(a)])); assert.equal(futureIgnored.totalAmount.toFixed(2), "800.00");
