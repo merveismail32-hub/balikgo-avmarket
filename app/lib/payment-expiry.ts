@@ -5,6 +5,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { enqueueNotifications } from "./notifications";
 import { createOrGetPaymentReconciliationReview, enqueuePaymentReconciliationAlerts } from "./payment-reconciliation";
 import { releaseOrderReservation } from "./stock-reservation";
+import { transitionOrderRewardForPayment } from "./reward-payment-lifecycle";
 
 export const PAYMENT_EXPIRY_BATCH_MAX = 25;
 export const PAYMENT_EXPIRY_LEASE_MS = 5 * 60_000;
@@ -56,6 +57,7 @@ export async function expireClaimedPayment(tx: Prisma.TransactionClient, claim: 
   }
   const changed = await tx.payment.updateMany({ where: { id: payment.id, expiryClaimToken: claim.expiryClaimToken, status: { in: ["PENDING", "AUTHORIZED"] }, reservationExpiresAt: { lte: now }, expiryClaimExpiresAt: { gt: now } }, data: { status: "EXPIRED", expiredAt: now } });
   if (!changed.count) return { outcome: "skipped" as const };
+  await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: `expiry:${payment.id}`, target: "REDEEM_RELEASED", lifecycleReason: "PAYMENT_EXPIRED", effectiveAt: now });
   await releaseOrderReservation(tx, { paymentId: payment.id, reason: "PAYMENT_EXPIRED" });
   await tx.payment.update({ where: { id: payment.id }, data: { stockReleasedAt: now, stockReleaseReason: "PAYMENT_EXPIRED", expiryClaimToken: null, expiryClaimedAt: null, expiryClaimExpiresAt: null } });
   await tx.financialAuditEvent.create({ data: { paymentId: payment.id, orderId: payment.orderId, entityType: "PAYMENT", entityId: payment.id, eventType: "PAYMENT_EXPIRED", fromStatus: payment.status, toStatus: "EXPIRED", source: "EXPIRY_WORKER" } });

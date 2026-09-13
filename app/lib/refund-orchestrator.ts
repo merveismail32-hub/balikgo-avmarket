@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Prisma } from "@prisma/client";
+import { applyCompletedRefundRewards } from "./reward-refund";
 
 export type RefundProviderResult = { outcome: "COMPLETED" | "FAILED" | "UNKNOWN"; providerRefundId?: string };
 export interface PaymentRefundProvider { refund(input: { providerPaymentId: string; amount: string; currency: string; idempotencyKey: string }): Promise<RefundProviderResult>; }
@@ -21,9 +22,12 @@ export async function claimRefundExecution(tx: Prisma.TransactionClient, refundI
 }
 
 export async function finalizeRefundExecution(tx: Prisma.TransactionClient, input: { refundId: string; result: RefundProviderResult }) {
+  const identity = await tx.refund.findUnique({ where: { id: input.refundId }, select: { orderId: true } });
+  if (!identity) throw new Error("REFUND_NOT_FOUND");
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`reward-refund:${identity.orderId}`}, 0))`;
   await tx.$queryRaw`SELECT id FROM "Refund" WHERE id = ${input.refundId} FOR UPDATE`;
   const refund = await tx.refund.findUniqueOrThrow({ where: { id: input.refundId } });
-  if (refund.status === "COMPLETED") return { status: "COMPLETED" as const, idempotent: true };
+  if (refund.status === "COMPLETED") { await applyCompletedRefundRewards(tx, { refundId: refund.id, reconciliation: true }); return { status: "COMPLETED" as const, idempotent: true }; }
   if (refund.status !== "PROCESSING") throw new Error("REFUND_NOT_PROCESSING");
   // Unknown is intentionally retained as PROCESSING: retrying could double-refund.
   if (input.result.outcome === "UNKNOWN") {
@@ -36,6 +40,7 @@ export async function finalizeRefundExecution(tx: Prisma.TransactionClient, inpu
   }
   if (!input.result.providerRefundId) throw new Error("REFUND_PROVIDER_REFERENCE_REQUIRED");
   await tx.refund.update({ where: { id: refund.id }, data: { status: "COMPLETED", providerRefundId: input.result.providerRefundId, providerOutcome: "COMPLETED", providerObservedAt: new Date(), completedAt: new Date() } });
+  await applyCompletedRefundRewards(tx, { refundId: refund.id });
   return { status: "COMPLETED" as const };
 }
 

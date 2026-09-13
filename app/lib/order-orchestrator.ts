@@ -7,6 +7,7 @@ import { releaseOrderItemReservation } from "./stock-reservation";
 import { evaluateCancellationEligibility, isPreHandoffShipmentStatus } from "./cancellation-eligibility";
 import { reconcileOrderAggregate } from "./order-reconciliation";
 import { releaseCouponReservation } from "./coupon-access";
+import { transitionOrderRewardForPayment } from "./reward-payment-lifecycle";
 
 type CancellationActor = { kind: "CUSTOMER"; userId: string } | { kind: "SELLER"; userId: string; sellerId: string };
 
@@ -123,6 +124,7 @@ export async function cancelOrderItem(tx: Prisma.TransactionClient, input: { ord
   if (payment && ["PENDING", "AUTHORIZED"].includes(payment.status) && await tx.orderItem.count({ where: { orderId: item.orderId, status: { not: "CANCELLED" } } }) === 0) {
     const redemption = await tx.couponRedemption.findUnique({ where: { orderId: item.orderId } });
     if (redemption?.campaignId) await releaseCouponReservation(tx, { redemptionId: redemption.id, userId: item.order.userId, orderId: item.orderId, reason: "PRE_PAYMENT_ORDER_CANCELLED" });
+    await transitionOrderRewardForPayment(tx, { orderId: item.orderId, userId: item.order.userId, paymentId: payment.id, eventIdentity: `pre-payment-cancel:${item.orderId}`, target: "REDEEM_RELEASED", lifecycleReason: "ORDER_CANCELLED_PRE_PAYMENT" });
   }
   return { status: "CANCELLED" as const, idempotent: false, refundId };
 }

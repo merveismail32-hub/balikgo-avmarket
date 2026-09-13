@@ -7,6 +7,7 @@ import { ensurePaidCancellationIntegrity, reconcileOrderPayouts } from "./order-
 import { consumeOrderReservationsForPayment, releaseOrderReservation } from "./stock-reservation";
 import { createOrGetPaymentReconciliationReview, enqueuePaymentReconciliationAlerts } from "./payment-reconciliation";
 import { parseProviderConfirmedInstallmentCount } from "./payments/provider-installment-consistency";
+import { transitionOrderRewardForPayment } from "./reward-payment-lifecycle";
 
 export function isDuplicatePaymentEventConflict(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError
@@ -41,6 +42,8 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
   const duplicate = await tx.paymentEvent.findUnique({ where: { provider_providerEventId: { provider: input.provider, providerEventId: input.event.eventId } }, select: { paymentId: true, eventType: true } });
   if (duplicate) {
     if (duplicate.paymentId !== payment.id || duplicate.eventType !== input.event.eventType) throw new Error("PAYMENT_EVENT_CONFLICT");
+    if (payment.status === "PAID") await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: input.event.eventId, target: "REDEEMED", lifecycleReason: "PAYMENT_SUCCEEDED", providerReference: input.event.providerPaymentId });
+    if (payment.status === "FAILED") await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: input.event.eventId, target: "REDEEM_RELEASED", lifecycleReason: "PAYMENT_FAILED", providerReference: input.event.providerPaymentId });
     return { duplicate: true };
   }
   const paymentEvent = await tx.paymentEvent.create({ data: { paymentId: payment.id, provider: input.provider, providerEventId: input.event.eventId, eventType: input.event.eventType, payloadHash: input.payloadHash } });
@@ -72,6 +75,7 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
   const conflictingFailure = !changed.count && target === "FAILED" && ["PAID", "REFUND_PENDING", "PARTIAL_REFUND_PENDING", "REFUNDED", "PARTIALLY_REFUNDED"].includes(current);
   await tx.financialAuditEvent.create({ data: { paymentId: payment.id, orderId: payment.orderId, entityType: "PAYMENT", entityId: payment.id, eventType: latePaid ? "LATE_PAYMENT_REVIEW_REQUIRED" : input.event.eventType, fromStatus: payment.status, toStatus: current, source: `WEBHOOK_${input.provider}`, externalEventId: input.event.eventId } });
   if (changed.count && target === "PAID") {
+    await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: input.event.eventId, target: "REDEEMED", lifecycleReason: "PAYMENT_SUCCEEDED", providerReference: input.event.providerPaymentId });
     await consumeOrderReservationsForPayment(tx, payment.id);
     await ensurePaidCancellationIntegrity(tx, payment.orderId);
     await reconcileOrderPayouts(tx, payment.orderId);
@@ -79,6 +83,7 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
     await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId: payment.orderId, type: "PAYMENT_PAID", dedupeKey: `payment-paid:${payment.id}:customer`, title: "Ödemeniz alındı", message: `${payment.order.orderNumber} numaralı siparişinizin ödemesi doğrulandı.` }, ...sellerIds.map((sellerId) => ({ sellerId, orderId: payment.orderId, type: "SELLER_NEW_ORDER", dedupeKey: `payment-paid:${payment.id}:seller:${sellerId}`, title: "Yeni sipariş", message: `${payment.order.orderNumber} numaralı siparişte mağazanıza ait ürünler bulunuyor.` }))]);
   }
   if (changed.count && target === "FAILED") {
+    await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: input.event.eventId, target: "REDEEM_RELEASED", lifecycleReason: "PAYMENT_FAILED", providerReference: input.event.providerPaymentId });
     await releaseOrderReservation(tx, { paymentId: payment.id, reason: "PAYMENT_FAILED" });
     await tx.payment.update({ where: { id: payment.id }, data: { stockReleasedAt: new Date(), stockReleaseReason: "PAYMENT_FAILED" } });
     await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId: payment.orderId, type: "PAYMENT_FAILED", dedupeKey: `payment-failed:${payment.id}:customer`, title: "Ödeme tamamlanamadı", message: `${payment.order.orderNumber} numaralı siparişiniz ödeme tamamlanamadığı için iptal edildi.` }]);

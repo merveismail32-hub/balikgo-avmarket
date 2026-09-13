@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { Prisma, type Refund } from "@prisma/client";
 import { claimRefundExecution, executeClaimedRefund, finalizeRefundExecution, type PaymentRefundProvider } from "../app/lib/refund-orchestrator";
 
-type TestRefund = Pick<Refund, "id" | "status" | "executionKey" | "providerRefundId" | "providerOutcome" | "providerObservedAt" | "amount" | "currency"> & { payment: { providerPaymentId: string | null } };
+type TestRefund = Pick<Refund, "id" | "orderId" | "status" | "executionKey" | "providerRefundId" | "providerOutcome" | "providerObservedAt" | "amount" | "currency"> & { payment: { providerPaymentId: string | null }; order: { userId: string; items: never[] } };
 type MutableRefund = TestRefund & Record<string, unknown>;
 
 function txFor(row: MutableRefund): Prisma.TransactionClient {
-  const client = { $queryRaw: async () => [], refund: { findUnique: async () => row, findUniqueOrThrow: async () => row, update: async ({ data }: { data: Record<string, unknown> }) => Object.assign(row, data) } };
+  const client = { $queryRaw: async () => [], $executeRaw: async () => 1, refund: { findUnique: async () => row, findUniqueOrThrow: async () => row, update: async ({ data }: { data: Record<string, unknown> }) => Object.assign(row, data) }, rewardAccount: { findUnique: async () => null } };
   return client as unknown as Prisma.TransactionClient;
 }
 function row(id: string, status: Refund["status"]): MutableRefund {
-  return { id, status, executionKey: null, providerRefundId: null, providerOutcome: null, providerObservedAt: null, amount: new Prisma.Decimal("42.50"), currency: "TRY", payment: { providerPaymentId: "payment-ref" } };
+  return { id, orderId: `order-${id}`, status, executionKey: null, providerRefundId: null, providerOutcome: null, providerObservedAt: null, amount: new Prisma.Decimal("42.50"), currency: "TRY", payment: { providerPaymentId: "payment-ref" }, order: { userId: "user-1", items: [] } };
 }
 
 async function main() {

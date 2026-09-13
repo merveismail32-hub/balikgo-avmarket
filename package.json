@@ -104,7 +104,12 @@
     "test:coupon-voucher-foundation": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-coupon-voucher-foundation.ts",
     "test:coupon-voucher-foundation-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-coupon-voucher-foundation-db-e2e.ts",
     "test:coupon-redemption": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-coupon-redemption.ts",
-    "test:coupon-payment-lifecycle-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-coupon-payment-lifecycle-db-e2e.ts"
+    "test:coupon-payment-lifecycle-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-coupon-payment-lifecycle-db-e2e.ts",
+    "test:loyalty-reward-foundation": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-loyalty-reward-foundation.ts",
+    "test:loyalty-reward-foundation-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-loyalty-reward-foundation-db-e2e.ts",
+    "test:loyalty-reward-redemption": "node --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/verify-loyalty-reward-redemption.ts",
+    "test:loyalty-reward-redemption-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-loyalty-reward-redemption-db-e2e.ts",
+    "test:loyalty-reward-refund-db": "node --env-file=.env --conditions=react-server --import ./scripts/test-os-userinfo-preload.mjs --import tsx scripts/test-loyalty-reward-refund-db-e2e.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

@@ -4,6 +4,8 @@ import { Prisma, type PaymentStatus } from "@prisma/client";
 import type { ObservedProviderPayment } from "./payments";
 import { createOrGetPaymentReconciliationReview } from "./payment-reconciliation";
 import { parseProviderConfirmedInstallmentCount } from "./payments/provider-installment-consistency";
+import { reconcileOrderRewardWithPayment } from "./reward-payment-lifecycle";
+import { RewardDomainError } from "./reward-domain";
 
 export type PaymentMismatchCategory =
   | "PROVIDER_SUCCESS_INTERNAL_PENDING" | "PROVIDER_SUCCESS_INTERNAL_FAILED" | "PROVIDER_SUCCESS_INTERNAL_EXPIRED"
@@ -39,11 +41,24 @@ export function classifyPaymentMismatch(payment: InternalTruth, observed: Observ
 
 export async function detectPaymentReconciliation(tx: Prisma.TransactionClient, input: { paymentId: string; observed: ObservedProviderPayment; detectedBy: string }) {
   await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${input.paymentId} FOR UPDATE`;
-  const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { id: true, orderId: true, status: true, amount: true, currency: true, provider: true, providerPaymentId: true, selectedInstallmentCount: true, providerConfirmedInstallmentCount: true, order: { select: { items: { select: { stockReservationState: true } } } } } });
+  const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, select: { id: true, orderId: true, status: true, amount: true, currency: true, provider: true, providerPaymentId: true, selectedInstallmentCount: true, providerConfirmedInstallmentCount: true, order: { select: { userId: true, items: { select: { stockReservationState: true } } } } } });
   if (!payment) throw new Error("PAYMENT_NOT_FOUND");
   const result = classifyPaymentMismatch(payment, input.observed);
   if (input.observed.providerConfirmedInstallmentCount !== undefined && payment.providerConfirmedInstallmentCount === null) {
     await tx.payment.update({ where: { id: payment.id }, data: { providerConfirmedInstallmentCount: parseProviderConfirmedInstallmentCount(input.observed.providerConfirmedInstallmentCount) } });
+  }
+  const rewardEvidenceMatches = (input.observed.status === "SUCCEEDED" && ["PAID", "REFUND_PENDING", "PARTIAL_REFUND_PENDING", "REFUNDED", "PARTIALLY_REFUNDED"].includes(payment.status))
+    || (input.observed.status === "FAILED" && ["FAILED", "EXPIRED", "CANCELLED"].includes(payment.status));
+  if (!result.category && rewardEvidenceMatches) {
+    try {
+      const reward = await reconcileOrderRewardWithPayment(tx, { paymentId: payment.id, eventIdentity: `reconciliation:${payment.id}:${input.observed.status}`, effectiveAt: input.observed.observedAt });
+      return { ...result, payment, reward };
+    } catch (error) {
+      if (!(error instanceof RewardDomainError) || error.code !== "REWARD_TERMINAL_CONFLICT") throw error;
+      const review = await createOrGetPaymentReconciliationReview(tx, { paymentId: payment.id, reason: "PAYMENT_STOCK_STATE_MISMATCH", terminalStatus: payment.status, mismatchCategory: "REWARD_TERMINAL_CONFLICT", priority: "CRITICAL", metadata: { detectedBy: input.detectedBy, observedStatus: input.observed.status, signal: "REWARD_TERMINAL_CONFLICT" } });
+      if (review.created) await tx.financialAuditEvent.create({ data: { paymentId: payment.id, orderId: payment.orderId, entityType: "PAYMENT", entityId: payment.id, eventType: "PAYMENT_RECONCILIATION_DETECTED", fromStatus: payment.status, toStatus: payment.status, source: input.detectedBy, externalEventId: `reconciliation:${review.review.id}` } });
+      return { category: "REWARD_TERMINAL_CONFLICT" as const, decision: "REQUIRE_MANUAL_REVIEW" as const, payment, review };
+    }
   }
   if (!result.category || result.decision === "REPLAY_ORCHESTRATION") return { ...result, payment };
   const reason = result.category === "INSTALLMENT_COUNT_MISMATCH"
