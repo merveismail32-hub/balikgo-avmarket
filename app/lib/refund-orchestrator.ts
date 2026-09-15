@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { applyCompletedRefundRewards } from "./reward-refund";
+import { restoreCapturedWalletForRefund } from "./wallet-refund";
 
 export type RefundProviderResult = { outcome: "COMPLETED" | "FAILED" | "UNKNOWN"; providerRefundId?: string };
 export interface PaymentRefundProvider { refund(input: { providerPaymentId: string; amount: string; currency: string; idempotencyKey: string }): Promise<RefundProviderResult>; }
@@ -40,6 +41,7 @@ export async function finalizeRefundExecution(tx: Prisma.TransactionClient, inpu
   }
   if (!input.result.providerRefundId) throw new Error("REFUND_PROVIDER_REFERENCE_REQUIRED");
   await tx.refund.update({ where: { id: refund.id }, data: { status: "COMPLETED", providerRefundId: input.result.providerRefundId, providerOutcome: "COMPLETED", providerObservedAt: new Date(), completedAt: new Date() } });
+  await restoreCapturedWalletForRefund(tx, { refundId: refund.id });
   await applyCompletedRefundRewards(tx, { refundId: refund.id });
   return { status: "COMPLETED" as const };
 }

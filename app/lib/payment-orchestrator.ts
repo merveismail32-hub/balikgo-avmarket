@@ -8,6 +8,7 @@ import { consumeOrderReservationsForPayment, releaseOrderReservation } from "./s
 import { createOrGetPaymentReconciliationReview, enqueuePaymentReconciliationAlerts } from "./payment-reconciliation";
 import { parseProviderConfirmedInstallmentCount } from "./payments/provider-installment-consistency";
 import { transitionOrderRewardForPayment } from "./reward-payment-lifecycle";
+import { captureWalletReservation, releaseWalletReservation } from "./wallet-tender-lifecycle";
 
 export function isDuplicatePaymentEventConflict(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError
@@ -75,6 +76,7 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
   const conflictingFailure = !changed.count && target === "FAILED" && ["PAID", "REFUND_PENDING", "PARTIAL_REFUND_PENDING", "REFUNDED", "PARTIALLY_REFUNDED"].includes(current);
   await tx.financialAuditEvent.create({ data: { paymentId: payment.id, orderId: payment.orderId, entityType: "PAYMENT", entityId: payment.id, eventType: latePaid ? "LATE_PAYMENT_REVIEW_REQUIRED" : input.event.eventType, fromStatus: payment.status, toStatus: current, source: `WEBHOOK_${input.provider}`, externalEventId: input.event.eventId } });
   if (changed.count && target === "PAID") {
+    await captureWalletReservation(tx, { paymentId: payment.id, idempotencyKey: `wallet-capture:v1:${input.event.eventId}`, effectiveAt: new Date(), providerReference: input.event.providerPaymentId });
     await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: input.event.eventId, target: "REDEEMED", lifecycleReason: "PAYMENT_SUCCEEDED", providerReference: input.event.providerPaymentId });
     await consumeOrderReservationsForPayment(tx, payment.id);
     await ensurePaidCancellationIntegrity(tx, payment.orderId);
@@ -83,6 +85,7 @@ export async function processVerifiedPaymentEvent(tx: Prisma.TransactionClient, 
     await enqueueNotifications(tx, [{ userId: payment.order.userId, orderId: payment.orderId, type: "PAYMENT_PAID", dedupeKey: `payment-paid:${payment.id}:customer`, title: "Ödemeniz alındı", message: `${payment.order.orderNumber} numaralı siparişinizin ödemesi doğrulandı.` }, ...sellerIds.map((sellerId) => ({ sellerId, orderId: payment.orderId, type: "SELLER_NEW_ORDER", dedupeKey: `payment-paid:${payment.id}:seller:${sellerId}`, title: "Yeni sipariş", message: `${payment.order.orderNumber} numaralı siparişte mağazanıza ait ürünler bulunuyor.` }))]);
   }
   if (changed.count && target === "FAILED") {
+    await releaseWalletReservation(tx, { paymentId: payment.id, idempotencyKey: `wallet-release:v1:${input.event.eventId}`, effectiveAt: new Date(), providerReference: input.event.providerPaymentId });
     await transitionOrderRewardForPayment(tx, { orderId: payment.orderId, userId: payment.order.userId, paymentId: payment.id, eventIdentity: input.event.eventId, target: "REDEEM_RELEASED", lifecycleReason: "PAYMENT_FAILED", providerReference: input.event.providerPaymentId });
     await releaseOrderReservation(tx, { paymentId: payment.id, reason: "PAYMENT_FAILED" });
     await tx.payment.update({ where: { id: payment.id }, data: { stockReleasedAt: new Date(), stockReleaseReason: "PAYMENT_FAILED" } });
